@@ -20,21 +20,23 @@ export function OnboardingPage() {
     setLoading(true)
     setError(null)
 
-    const { data: household, error: createError } = await supabase
-      .from('households')
-      .insert({ name: householdName })
-      .select('id')
-      .single()
+    // Generate ID client-side to avoid needing a SELECT-back
+    // (RLS SELECT policy requires profile linkage that doesn't exist yet)
+    const householdId = crypto.randomUUID()
 
-    if (createError || !household) {
-      setError(createError?.message ?? 'Failed to create household')
+    const { error: createError } = await supabase
+      .from('households')
+      .insert({ id: householdId, name: householdName })
+
+    if (createError) {
+      setError(createError.message)
       setLoading(false)
       return
     }
 
     const { error: updateError } = await supabase
       .from('profiles')
-      .update({ household_id: (household as { id: string }).id })
+      .update({ household_id: householdId })
       .eq('id', user.id)
 
     if (updateError) {
@@ -52,26 +54,21 @@ export function OnboardingPage() {
     setLoading(true)
     setError(null)
 
-    // Verify household exists
-    const { data: household } = await supabase
-      .from('households')
-      .select('id')
-      .eq('id', inviteCode.trim())
-      .single()
+    const householdId = inviteCode.trim()
 
-    if (!household) {
-      setError('Household not found. Check the invite code.')
-      setLoading(false)
-      return
-    }
-
+    // Try to link profile to the household directly.
+    // If the household ID doesn't exist, the FK constraint will reject it.
     const { error: updateError } = await supabase
       .from('profiles')
-      .update({ household_id: (household as { id: string }).id })
+      .update({ household_id: householdId })
       .eq('id', user.id)
 
     if (updateError) {
-      setError(updateError.message)
+      if (updateError.message.includes('foreign key') || updateError.code === '23503') {
+        setError('Household not found. Check the invite code.')
+      } else {
+        setError(updateError.message)
+      }
       setLoading(false)
       return
     }
