@@ -20,7 +20,8 @@ import {
 } from '@/components/ui/select'
 import { useCashflowEntriesByCategory, useCreateAdHocEntry } from '@/hooks/useCashflowEntries'
 import { CashFlowRow } from './CashFlowRow'
-import type { ItemCategory } from '@/types/database'
+import { CashFlowYearView } from './CashFlowYearView'
+import type { CashflowEntry, ItemCategory } from '@/types/database'
 import { toast } from 'sonner'
 
 const monthNames = [
@@ -69,18 +70,15 @@ function formatCurrency(value: number): string {
 
 export function CashFlowPage() {
   const now = new Date()
+  const [view, setView] = useState<'year' | 'month'>('year')
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [adHocOpen, setAdHocOpen] = useState(false)
 
-  const {
-    grouped,
-    totalProjected,
-    totalActual,
-    totalUnpaid,
-    totalIncome,
-    isLoading,
-  } = useCashflowEntriesByCategory(year, month)
+  // Month view data (only fetched when active)
+  const monthQuery = useCashflowEntriesByCategory(year, month)
+  const { grouped, totalProjected, totalActual, totalUnpaid, totalIncome, isLoading } =
+    view === 'month' ? monthQuery : { grouped: {} as Record<string, CashflowEntry[]>, totalProjected: 0, totalActual: 0, totalUnpaid: 0, totalIncome: 0, isLoading: false }
 
   function prevMonth() {
     if (month === 1) {
@@ -106,43 +104,75 @@ export function CashFlowPage() {
 
   return (
     <div className="space-y-6">
-      {/* Month navigation */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={prevMonth}
-            className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1 text-lg"
-          >
-            &larr;
-          </button>
-          <div className="text-center min-w-[10rem]">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {monthNames[month - 1]}
-            </h1>
-            <p className="text-sm text-muted-foreground">{year}</p>
-          </div>
-          <button
-            onClick={nextMonth}
-            className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1 text-lg"
-          >
-            &rarr;
-          </button>
-          {!isCurrentMonth && (
+      {/* Header */}
+      {view === 'year' ? (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
             <button
-              onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth() + 1) }}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setYear(year - 1)}
+              className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1 text-lg"
             >
-              Today
+              &larr;
             </button>
-          )}
+            <h1 className="text-2xl font-semibold tracking-tight min-w-[5rem] text-center">{year}</h1>
+            <button
+              onClick={() => setYear(year + 1)}
+              className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1 text-lg"
+            >
+              &rarr;
+            </button>
+          </div>
+          <div className="flex gap-2 items-center">
+            <ViewToggle view={view} onViewChange={setView} />
+          </div>
         </div>
-        <Button variant="outline" onClick={() => setAdHocOpen(true)}>
-          Add Entry
-        </Button>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={prevMonth}
+              className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1 text-lg"
+            >
+              &larr;
+            </button>
+            <div className="text-center min-w-[10rem]">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {monthNames[month - 1]}
+              </h1>
+              <p className="text-sm text-muted-foreground">{year}</p>
+            </div>
+            <button
+              onClick={nextMonth}
+              className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1 text-lg"
+            >
+              &rarr;
+            </button>
+            {!isCurrentMonth && (
+              <button
+                onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth() + 1) }}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Today
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2 items-center">
+            <Button variant="outline" onClick={() => setAdHocOpen(true)}>
+              Add Entry
+            </Button>
+            <ViewToggle view={view} onViewChange={setView} />
+          </div>
+        </div>
+      )}
 
-      {/* Summary bar */}
-      {hasEntries && !isLoading && (
+      {/* Year view */}
+      {view === 'year' && <CashFlowYearView year={year} />}
+
+      {/* Month view */}
+      {view === 'month' && (
+        <>
+          {/* Summary bar */}
+          {hasEntries && !isLoading && (
         <div className="flex gap-6 text-sm flex-wrap">
           <div>
             <span className="text-muted-foreground">Projected </span>
@@ -232,6 +262,41 @@ export function CashFlowPage() {
         year={year}
         month={month}
       />
+        </>
+      )}
+
+      {/* Ad-hoc dialog available in both views */}
+      {view === 'year' && (
+        <AdHocEntryDialog
+          open={adHocOpen}
+          onOpenChange={setAdHocOpen}
+          year={year}
+          month={month}
+        />
+      )}
+    </div>
+  )
+}
+
+function ViewToggle({ view, onViewChange }: { view: 'year' | 'month'; onViewChange: (v: 'year' | 'month') => void }) {
+  return (
+    <div className="flex border border-border rounded overflow-hidden text-xs">
+      <button
+        onClick={() => onViewChange('year')}
+        className={`px-3 py-1.5 transition-colors ${
+          view === 'year' ? 'bg-foreground text-background' : 'hover:bg-secondary'
+        }`}
+      >
+        Year
+      </button>
+      <button
+        onClick={() => onViewChange('month')}
+        className={`px-3 py-1.5 transition-colors ${
+          view === 'month' ? 'bg-foreground text-background' : 'hover:bg-secondary'
+        }`}
+      >
+        Month
+      </button>
     </div>
   )
 }

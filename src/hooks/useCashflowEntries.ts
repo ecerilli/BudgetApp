@@ -25,6 +25,28 @@ export function useCashflowEntries(year: number, month: number) {
   })
 }
 
+export function useCashflowYear(year: number) {
+  const { householdId } = useAuth()
+
+  return useQuery({
+    queryKey: ['cashflow_entries', householdId, year],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cashflow_entries')
+        .select('*')
+        .eq('household_id', householdId!)
+        .eq('year', year)
+        .order('category')
+        .order('name')
+        .order('month')
+
+      if (error) throw error
+      return data as CashflowEntry[]
+    },
+    enabled: !!householdId,
+  })
+}
+
 export function useCashflowEntriesByCategory(year: number, month: number) {
   const query = useCashflowEntries(year, month)
   const entries = query.data ?? []
