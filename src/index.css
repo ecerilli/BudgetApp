@@ -2,31 +2,33 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+@import "@fontsource/roboto/latin-400.css";
+@import "@fontsource/roboto/latin-500.css";
+@import "@fontsource/roboto/latin-700.css";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-    /* Apple-inspired monochromatic palette */
-    --background: #FAFAFA;
+    /* Neutral, paper-like system with restrained blue accents */
+    --background: #f6f4ef;
     --foreground: #1D1D1F;
-    --card: #FFFFFF;
+    --card: #fffcf8;
     --card-foreground: #1D1D1F;
-    --popover: #FFFFFF;
+    --popover: #fffdfa;
     --popover-foreground: #1D1D1F;
     --primary: #1D1D1F;
     --primary-foreground: #FAFAFA;
-    --secondary: #F5F5F7;
+    --secondary: #efebe2;
     --secondary-foreground: #1D1D1F;
-    --muted: #F5F5F7;
-    --muted-foreground: #6E6E73;
+    --muted: #ede8de;
+    --muted-foreground: #69655d;
     --accent: #007AFF;
     --accent-foreground: #FFFFFF;
     --destructive: #FF3B30;
-    --border: #E5E5EA;
-    --input: #E5E5EA;
+    --border: #ddd7cb;
+    --input: #ddd7cb;
     --ring: #007AFF;
-    --radius: 0.5rem;
+    --radius: 0.9rem;
 
     /* Custom semantic tokens */
     --success: #34C759;
@@ -37,7 +39,7 @@
 
 @theme inline {
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
-    --font-mono: 'GeistMono Variable', ui-monospace, monospace;
+    --font-mono: 'Roboto', ui-sans-serif, system-ui, sans-serif;
     --color-background: var(--background);
     --color-foreground: var(--foreground);
     --color-card: var(--card);
@@ -75,8 +77,17 @@
     }
     body {
         @apply bg-background text-foreground antialiased;
+        min-height: 100vh;
+        background-image:
+            radial-gradient(circle at top left, rgba(0, 122, 255, 0.09), transparent 24rem),
+            radial-gradient(circle at top right, rgba(255, 149, 0, 0.08), transparent 20rem),
+            linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+        background-attachment: fixed;
     }
     html {
         @apply font-sans;
+    }
+    ::selection {
+        background: color-mix(in srgb, var(--accent) 18%, white);
     }
 }

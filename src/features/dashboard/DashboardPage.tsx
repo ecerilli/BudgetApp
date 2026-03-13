@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/auth-context'
 import { useAccountsByType } from '@/hooks/useAccounts'
 import { AccountCard } from '@/features/dashboard/AccountCard'
 import { AddAccountDialog } from '@/features/dashboard/AddAccountDialog'
@@ -18,47 +18,68 @@ const sectionOrder: { type: AccountType; label: string }[] = [
 
 export function DashboardPage() {
   const { profile } = useAuth()
-  const { grouped, totals, netCash, netWorth, isLoading } = useAccountsByType()
+  const { grouped, totals, netCash, isLoading } = useAccountsByType()
   const [showAdd, setShowAdd] = useState(false)
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
-        <p className="text-sm text-muted-foreground">
-          Welcome back{profile?.display_name ? `, ${profile.display_name}` : ''}.
-        </p>
-      </div>
+      <section className="rounded-[1.5rem] border border-border/80 bg-card/90 p-5 shadow-sm shadow-black/5 sm:p-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
+              Accounts
+            </p>
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+                Household balances
+              </h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Welcome back{profile?.display_name ? `, ${profile.display_name}` : ''}. Track cash on hand, card balances, and the amount that is actually available.
+              </p>
+            </div>
+          </div>
 
-      {/* Net Worth Summary */}
+          <Button variant="outline" size="sm" onClick={() => setShowAdd(true)} className="self-start lg:self-auto">
+            Add Account
+          </Button>
+        </div>
+      </section>
+
       {isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-lg" />
+        <div className="grid gap-4 md:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 rounded-[1.25rem]" />
           ))}
         </div>
       ) : (
-        <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <SummaryCard label="Net Cash" value={netCash} />
-          <SummaryCard label="CC Debt" value={-totals.credit} negative />
-          <SummaryCard label="Retirement" value={totals.retirement} />
-          <SummaryCard label="Net Worth" value={netWorth} highlight />
+        <section className="grid gap-4 md:grid-cols-3">
+          <SummaryCard
+            label="All Cash"
+            value={totals.cash}
+            tone="default"
+            detail="Checking, cash, and liquid accounts"
+          />
+          <SummaryCard
+            label="Credit Card Debt"
+            value={totals.credit}
+            tone="debt"
+            detail="Current card balances to cover"
+          />
+          <SummaryCard
+            label="Net Cash"
+            value={netCash}
+            tone={netCash < 0 ? 'debt' : 'highlight'}
+            detail="Cash minus current card debt"
+          />
         </section>
       )}
 
       {/* Account Sections */}
       <section className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">Accounts</h2>
-          <Button variant="outline" size="sm" onClick={() => setShowAdd(true)}>
-            Add Account
-          </Button>
-        </div>
-
         {isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 rounded-lg" />
+              <Skeleton key={i} className="h-20 rounded-[1.25rem]" />
             ))}
           </div>
         ) : (
@@ -69,14 +90,17 @@ export function DashboardPage() {
                 <AccountSection
                   key={section.type}
                   label={section.label}
+                  type={section.type}
                   accounts={grouped[section.type]}
                 />
               ))}
 
             {Object.keys(grouped).length === 0 && (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                No accounts yet. Add your first account to get started.
-              </p>
+              <div className="rounded-[1.5rem] border border-dashed border-border bg-card/70 px-6 py-12 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No accounts yet. Add your first account to get started.
+                </p>
+              </div>
             )}
           </>
         )}
@@ -90,52 +114,74 @@ export function DashboardPage() {
 function SummaryCard({
   label,
   value,
-  negative,
-  highlight,
+  tone,
+  detail,
 }: {
   label: string
   value: number
-  negative?: boolean
-  highlight?: boolean
+  tone: 'default' | 'highlight' | 'debt'
+  detail: string
 }) {
   const formatted = formatCurrency(Math.abs(value))
   const isNeg = value < 0
+  const toneClasses =
+    tone === 'debt'
+      ? 'border-destructive/20 bg-destructive/5'
+      : tone === 'highlight'
+        ? 'border-accent/20 bg-accent/6'
+        : 'border-border/80 bg-card/90'
 
   return (
-    <div
-      className={`rounded-lg border border-border bg-card p-4 ${
-        highlight ? 'ring-1 ring-accent/20' : ''
-      }`}
-    >
-      <p className="text-xs text-muted-foreground">{label}</p>
+    <div className={`rounded-[1.4rem] border p-5 shadow-sm shadow-black/5 ${toneClasses}`}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+        {label}
+      </p>
       <p
-        className={`text-xl font-semibold font-mono tabular-nums mt-1 ${
-          negative || isNeg ? 'text-destructive' : ''
+        className={`mt-3 text-3xl font-semibold font-mono tabular-nums tracking-tight ${
+          tone === 'debt' || isNeg ? 'text-destructive' : ''
         }`}
       >
         {isNeg ? '-' : ''}
         {formatted}
       </p>
+      <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
     </div>
   )
 }
 
 function AccountSection({
   label,
+  type,
   accounts,
 }: {
   label: string
+  type: AccountType
   accounts: Account[]
 }) {
+  const total = accounts.reduce((sum, account) => sum + Number(account.balance), 0)
+  const showTotal = type === 'cash' || type === 'credit'
+  const totalLabel = type === 'credit' ? 'Total debt' : 'Total'
+  const totalClassName = type === 'credit' ? 'text-destructive' : 'text-foreground'
+
   return (
-    <div>
-      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+    <div className="rounded-[1.5rem] border border-border/80 bg-card/90 p-4 shadow-sm shadow-black/5 sm:p-5">
+      <h3 className="mb-3 text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
         {label}
       </h3>
-      <div className="rounded-lg border border-border bg-card divide-y divide-border px-3">
+      <div className="overflow-hidden rounded-[1.1rem] border border-border/80 bg-background/55 divide-y divide-border/80">
         {accounts.map((account) => (
           <AccountCard key={account.id} account={account} />
         ))}
+        {showTotal && (
+          <div className="flex items-center justify-between border-t border-border/80 bg-secondary/55 px-4 py-3">
+            <span className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {totalLabel}
+            </span>
+            <span className={`font-mono text-sm font-semibold tabular-nums ${totalClassName}`}>
+              {formatCurrency(total)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

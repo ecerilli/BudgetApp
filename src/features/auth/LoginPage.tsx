@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'

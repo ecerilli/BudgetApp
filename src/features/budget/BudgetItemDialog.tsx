@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
-  DialogDescription,
 } from '@/components/ui/dialog'
 import {
   Select,
@@ -21,7 +21,7 @@ import { useCreateBudgetItem, useUpdateBudgetItem } from '@/hooks/useBudgetItems
 import type { BudgetItem, ItemCategory, ItemFrequency, IncomeType } from '@/types/database'
 import { toast } from 'sonner'
 
-const categories: { value: ItemCategory; label: string }[] = [
+const expenseCategories: { value: Exclude<ItemCategory, 'income'>; label: string }[] = [
   { value: 'housing', label: 'Housing' },
   { value: 'utilities', label: 'Utilities' },
   { value: 'car', label: 'Car' },
@@ -31,7 +31,6 @@ const categories: { value: ItemCategory; label: string }[] = [
   { value: 'business', label: 'Business' },
   { value: 'taxes', label: 'Taxes' },
   { value: 'savings', label: 'Savings' },
-  { value: 'income', label: 'Income' },
 ]
 
 const frequencies: { value: ItemFrequency; label: string }[] = [
@@ -50,7 +49,7 @@ const incomeTypes: { value: IncomeType; label: string }[] = [
   { value: 'gift', label: 'Gift' },
   { value: 'reimbursement', label: 'Reimbursement' },
   { value: 'refund', label: 'Refund' },
-  { value: 'untaxed', label: 'Other (Untaxed)' },
+  { value: 'untaxed', label: 'Other' },
 ]
 
 interface BudgetItemDialogProps {
@@ -59,39 +58,38 @@ interface BudgetItemDialogProps {
   editItem?: BudgetItem | null
 }
 
+function getInitialFormState(editItem?: BudgetItem | null) {
+  return {
+    name: editItem?.name ?? '',
+    expenseCategory: editItem && !editItem.is_income ? editItem.category as Exclude<ItemCategory, 'income'> : 'misc',
+    amount: editItem ? String(Number(editItem.monthly_amount)) : '',
+    frequency: editItem?.frequency ?? 'monthly',
+    monthsActive: editItem?.months_active ?? allMonths,
+    isIncome: editItem?.is_income ?? false,
+    incomeType: editItem?.income_type ?? null,
+    ccPaid: editItem?.cc_paid ?? false,
+    isVariable: editItem?.is_variable ?? false,
+  } as const
+}
+
 export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDialogProps) {
-  const [name, setName] = useState('')
-  const [category, setCategory] = useState<ItemCategory>('misc')
-  const [amount, setAmount] = useState('')
-  const [frequency, setFrequency] = useState<ItemFrequency>('monthly')
-  const [monthsActive, setMonthsActive] = useState<number[]>(allMonths)
-  const [isIncome, setIsIncome] = useState(false)
-  const [incomeType, setIncomeType] = useState<IncomeType | null>(null)
-  const [ccPaid, setCcPaid] = useState(false)
-  const [isVariable, setIsVariable] = useState(false)
+  const initialState = getInitialFormState(editItem)
+  const [name, setName] = useState(initialState.name)
+  const [expenseCategory, setExpenseCategory] = useState<Exclude<ItemCategory, 'income'>>(initialState.expenseCategory)
+  const [amount, setAmount] = useState(initialState.amount)
+  const [frequency, setFrequency] = useState<ItemFrequency>(initialState.frequency)
+  const [monthsActive, setMonthsActive] = useState<number[]>(initialState.monthsActive)
+  const [isIncome, setIsIncome] = useState(initialState.isIncome)
+  const [incomeType, setIncomeType] = useState<IncomeType | null>(initialState.incomeType)
+  const [ccPaid, setCcPaid] = useState(initialState.ccPaid)
+  const [isVariable, setIsVariable] = useState(initialState.isVariable)
 
   const createItem = useCreateBudgetItem()
   const updateItem = useUpdateBudgetItem()
 
-  useEffect(() => {
-    if (editItem) {
-      setName(editItem.name)
-      setCategory(editItem.category)
-      setAmount(String(Number(editItem.monthly_amount)))
-      setFrequency(editItem.frequency)
-      setMonthsActive(editItem.months_active)
-      setIsIncome(editItem.is_income)
-      setIncomeType(editItem.income_type ?? null)
-      setCcPaid(editItem.cc_paid)
-      setIsVariable(editItem.is_variable)
-    } else {
-      reset()
-    }
-  }, [editItem, open])
-
   function reset() {
     setName('')
-    setCategory('misc')
+    setExpenseCategory('misc')
     setAmount('')
     setFrequency('monthly')
     setMonthsActive(allMonths)
@@ -101,9 +99,18 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
     setIsVariable(false)
   }
 
-  function toggleMonth(m: number) {
+  function handleItemTypeChange(nextType: 'income' | 'expense') {
+    const nextIsIncome = nextType === 'income'
+    setIsIncome(nextIsIncome)
+
+    if (nextIsIncome) {
+      setCcPaid(false)
+    }
+  }
+
+  function toggleMonth(month: number) {
     setMonthsActive((prev) =>
-      prev.includes(m) ? prev.filter((v) => v !== m) : [...prev, m].sort((a, b) => a - b)
+      prev.includes(month) ? prev.filter((value) => value !== month) : [...prev, month].sort((a, b) => a - b)
     )
   }
 
@@ -113,12 +120,12 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
 
     const payload = {
       name: name.trim(),
-      category,
+      category: (isIncome ? 'income' : expenseCategory) as ItemCategory,
       monthly_amount: parseFloat(amount) || 0,
       frequency,
       months_active: monthsActive,
       is_income: isIncome,
-      cc_paid: ccPaid,
+      cc_paid: isIncome ? false : ccPaid,
       is_variable: isVariable,
       income_type: isIncome ? incomeType : null,
     }
@@ -134,16 +141,17 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
           onError: () => toast.error('Failed to update item'),
         }
       )
-    } else {
-      createItem.mutate(payload, {
-        onSuccess: () => {
-          toast.success('Item added')
-          reset()
-          onOpenChange(false)
-        },
-        onError: () => toast.error('Failed to create item'),
-      })
+      return
     }
+
+    createItem.mutate(payload, {
+      onSuccess: () => {
+        toast.success('Item added')
+        reset()
+        onOpenChange(false)
+      },
+      onError: () => toast.error('Failed to create item'),
+    })
   }
 
   return (
@@ -152,40 +160,87 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
         <DialogHeader>
           <DialogTitle>{editItem ? 'Edit Item' : 'Add Budget Item'}</DialogTitle>
           <DialogDescription>
-            {editItem ? 'Update this recurring item.' : 'Add a recurring expense or income.'}
+            {editItem ? 'Update this recurring item.' : 'Add a recurring income or expense item.'}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label>Item Type</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleItemTypeChange('expense')}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  !isIncome
+                    ? 'border-foreground bg-foreground text-background'
+                    : 'border-border bg-background text-foreground hover:border-foreground/30'
+                }`}
+              >
+                Expense
+              </button>
+              <button
+                type="button"
+                onClick={() => handleItemTypeChange('income')}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  isIncome
+                    ? 'border-foreground bg-foreground text-background'
+                    : 'border-border bg-background text-foreground hover:border-foreground/30'
+                }`}
+              >
+                Income
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="item-name">Name</Label>
             <Input
               id="item-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Rent"
+              placeholder={isIncome ? 'e.g. Main paycheck' : 'e.g. Rent'}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Category</Label>
-              <Select value={category} onValueChange={(v) => setCategory(v as ItemCategory)}>
-                <SelectTrigger>
-                  <SelectValue>{(v: string) => categories.find(c => c.value === v)?.label ?? v}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((c) => (
-                    <SelectItem key={c.value} value={c.value} label={c.label}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>{isIncome ? 'Income Type' : 'Expense Category'}</Label>
+              {isIncome ? (
+                <Select value={incomeType ?? ''} onValueChange={(value) => setIncomeType(value as IncomeType)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select type...">
+                      {(value: string) => incomeTypes.find((type) => type.value === value)?.label ?? value}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {incomeTypes.map((type) => (
+                      <SelectItem key={type.value} value={type.value} label={type.label}>
+                        {type.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select value={expenseCategory} onValueChange={(value) => setExpenseCategory(value as Exclude<ItemCategory, 'income'>)}>
+                  <SelectTrigger>
+                    <SelectValue>
+                      {(value: string) => expenseCategories.find((category) => category.value === value)?.label ?? value}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {expenseCategories.map((category) => (
+                      <SelectItem key={category.value} value={category.value} label={category.label}>
+                        {category.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="item-amount">Monthly Amount</Label>
+              <Label htmlFor="item-amount">{isIncome ? 'Planned Amount' : 'Budget Amount'}</Label>
               <Input
                 id="item-amount"
                 type="number"
@@ -199,14 +254,14 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
 
           <div className="space-y-2">
             <Label>Frequency</Label>
-            <Select value={frequency} onValueChange={(v) => setFrequency(v as ItemFrequency)}>
+            <Select value={frequency} onValueChange={(value) => setFrequency(value as ItemFrequency)}>
               <SelectTrigger>
-                <SelectValue>{(v: string) => frequencies.find(f => f.value === v)?.label ?? v}</SelectValue>
+                <SelectValue>{(value: string) => frequencies.find((frequency) => frequency.value === value)?.label ?? value}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {frequencies.map((f) => (
-                  <SelectItem key={f.value} value={f.value} label={f.label}>
-                    {f.label}
+                {frequencies.map((item) => (
+                  <SelectItem key={item.value} value={item.value} label={item.label}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -216,81 +271,67 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
           <div className="space-y-2">
             <Label>Active Months</Label>
             <div className="flex flex-wrap gap-1.5">
-              {allMonths.map((m) => (
+              {allMonths.map((month) => (
                 <button
-                  key={m}
+                  key={month}
                   type="button"
-                  onClick={() => toggleMonth(m)}
-                  className={`px-2 py-1 text-xs rounded border transition-colors ${
-                    monthsActive.includes(m)
-                      ? 'bg-foreground text-background border-foreground'
-                      : 'bg-background text-muted-foreground border-border hover:border-foreground/30'
+                  onClick={() => toggleMonth(month)}
+                  className={`rounded border px-2 py-1 text-xs transition-colors ${
+                    monthsActive.includes(month)
+                      ? 'border-foreground bg-foreground text-background'
+                      : 'border-border bg-background text-muted-foreground hover:border-foreground/30'
                   }`}
                 >
-                  {monthLabels[m - 1]}
+                  {monthLabels[month - 1]}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="flex gap-6">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isIncome}
-                onChange={(e) => setIsIncome(e.target.checked)}
-                className="rounded border-border"
-              />
-              Income item
-            </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={ccPaid}
-                onChange={(e) => setCcPaid(e.target.checked)}
-                className="rounded border-border"
-              />
-              Paid via CC
-            </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <div className="flex flex-wrap gap-6">
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={isVariable}
                 onChange={(e) => setIsVariable(e.target.checked)}
                 className="rounded border-border"
               />
-              Variable budget
+              {isIncome ? 'Variable amount' : 'Variable budget'}
             </label>
+
+            {!isIncome && (
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={ccPaid}
+                  onChange={(e) => setCcPaid(e.target.checked)}
+                  className="rounded border-border"
+                />
+                Paid via CC
+              </label>
+            )}
           </div>
 
-          {isIncome && (
-            <div className="space-y-2">
-              <Label>Income Type</Label>
-              <Select value={incomeType ?? ''} onValueChange={(v) => setIncomeType(v as IncomeType)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select type…">{(v: string) => incomeTypes.find(t => t.value === v)?.label ?? v}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {incomeTypes.map((t) => (
-                    <SelectItem key={t.value} value={t.value} label={t.label}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {incomeType === 'w2' && (
-                <p className="text-xs text-muted-foreground">
-                  W2 income uses bi-monthly pay — first mark-paid records half, second completes it.
-                </p>
-              )}
-            </div>
+          {isIncome && incomeType === 'w2' && (
+            <p className="text-xs text-muted-foreground">
+              W2 income uses the half-pay workflow in the cash flow year view.
+            </p>
+          )}
+
+          {isIncome && isVariable && (
+            <p className="text-xs text-muted-foreground">
+              Variable income uses the entered amount directly. It does not use remaining-budget behavior.
+            </p>
+          )}
+
+          {!isIncome && isVariable && (
+            <p className="text-xs text-muted-foreground">
+              Variable expenses use the budget amount here, then track actual spending from the cash flow year view.
+            </p>
           )}
 
           <DialogFooter>
-            <Button
-              type="submit"
-              disabled={createItem.isPending || updateItem.isPending}
-            >
+            <Button type="submit" disabled={createItem.isPending || updateItem.isPending}>
               {editItem ? 'Save Changes' : 'Add Item'}
             </Button>
           </DialogFooter>

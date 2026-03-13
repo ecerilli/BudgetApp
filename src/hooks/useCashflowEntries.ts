@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/auth-context'
 import type { CashflowEntry, ItemCategory } from '@/types/database'
 
 export function useCashflowEntries(year: number, month: number) {

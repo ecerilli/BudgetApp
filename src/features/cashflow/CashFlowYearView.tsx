@@ -1,9 +1,29 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useCashflowYear, useTogglePaid, useUpdateCashflowEntry, useCreateCashflowEntry, useDeleteCashflowEntry } from '@/hooks/useCashflowEntries'
 import { useAccountsByType, useUpdateAccount } from '@/hooks/useAccounts'
 import { useBudgetItems, useCreateBudgetItem, useUpdateBudgetItem } from '@/hooks/useBudgetItems'
 import { useHousehold, useUpdateHousehold } from '@/hooks/useHousehold'
+import { supabase } from '@/lib/supabase'
 import type { CashflowEntry, ItemCategory, Account } from '@/types/database'
 import { toast } from 'sonner'
 
@@ -28,6 +48,18 @@ const expenseCategoryOrder = [
   'subscriptions', 'business', 'taxes', 'savings', 'misc',
 ]
 
+const expenseCategoryOptions: { value: Exclude<ItemCategory, 'income'>; label: string }[] = [
+  { value: 'housing', label: 'Housing' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'car', label: 'Car' },
+  { value: 'food', label: 'Food' },
+  { value: 'subscriptions', label: 'Subscriptions' },
+  { value: 'business', label: 'Business' },
+  { value: 'taxes', label: 'Taxes' },
+  { value: 'savings', label: 'Savings' },
+  { value: 'misc', label: 'Misc' },
+]
+
 interface YearRow {
   key: string
   name: string
@@ -35,6 +67,8 @@ interface YearRow {
   category: string
   entries: (CashflowEntry | null)[] // index 0-11 for months 1-12
 }
+
+type MonthStatus = 'past' | 'current' | 'future'
 
 function buildRows(entries: CashflowEntry[]): { expenseRows: YearRow[]; incomeRows: YearRow[]; expensesByCategory: Record<string, YearRow[]> } {
   // Group entries by a unique row key (budget_item_id or name+category for ad-hoc)
@@ -114,7 +148,27 @@ function fmtFull(value: number): string {
   }).format(value)
 }
 
+function getMonthStatus(viewYear: number, monthIndex: number, today: Date): MonthStatus {
+  const currentYear = today.getFullYear()
+  const currentMonth = today.getMonth()
+
+  if (viewYear < currentYear) return 'past'
+  if (viewYear > currentYear) return 'future'
+  if (monthIndex < currentMonth) return 'past'
+  if (monthIndex === currentMonth) return 'current'
+  return 'future'
+}
+
+function getMonthValueClass(status: MonthStatus): string {
+  return status === 'past' ? 'opacity-45' : ''
+}
+
+function getMonthGridClass(status: MonthStatus, monthIndex: number): string {
+  return `${monthIndex === 0 ? '' : 'border-l border-border/10'} ${getMonthValueClass(status)}`.trim()
+}
+
 export function CashFlowYearView({ year }: { year: number }) {
+  const queryClient = useQueryClient()
   const { data: entries, isLoading } = useCashflowYear(year)
   const { netCash, totals, ccPayTotal, ccRollover, grouped } = useAccountsByType()
   const { data: budgetItems } = useBudgetItems()
@@ -127,7 +181,7 @@ export function CashFlowYearView({ year }: { year: number }) {
 
   // Build set of budget_item_ids that are variable
   const variableSet = new Set<string>(
-    (budgetItems ?? []).filter((bi) => bi.is_variable).map((bi) => bi.id)
+    (budgetItems ?? []).filter((bi) => bi.is_variable && !bi.is_income).map((bi) => bi.id)
   )
 
   // Build set of budget_item_ids that are W2 income (for half-pay mechanic)
@@ -149,8 +203,23 @@ export function CashFlowYearView({ year }: { year: number }) {
 
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+  const [rowMenu, setRowMenu] = useState<RowMenuState | null>(null)
   const [addEntryOpen, setAddEntryOpen] = useState(false)
   const [taxRateMenu, setTaxRateMenu] = useState<{ x: number; y: number } | null>(null)
+  const [renameRowState, setRenameRowState] = useState<RowActionState | null>(null)
+  const [deleteRowState, setDeleteRowState] = useState<RowActionState | null>(null)
+  const [editCategoryState, setEditCategoryState] = useState<RowCategoryState | null>(null)
+  const [categoryMenu, setCategoryMenu] = useState<CategoryMenuState | null>(null)
+  const [visibleCategorySubtotals, setVisibleCategorySubtotals] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {}
+
+    try {
+      const raw = window.localStorage.getItem('cashflow-category-subtotals')
+      return raw ? JSON.parse(raw) as Record<string, boolean> : {}
+    } catch {
+      return {}
+    }
+  })
 
   const togglePaid = useTogglePaid()
   const updateEntry = useUpdateCashflowEntry()
@@ -160,11 +229,33 @@ export function CashFlowYearView({ year }: { year: number }) {
   const createBudgetItem = useCreateBudgetItem()
   const updateBudgetItem = useUpdateBudgetItem()
 
-  const openContextMenu = useCallback((e: React.MouseEvent, entry: CashflowEntry, isCcPaid: boolean, isVariable: boolean, rowContext: RowContext) => {
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('cashflow-category-subtotals', JSON.stringify(visibleCategorySubtotals))
+  }, [visibleCategorySubtotals])
+
+  function openContextMenu(e: React.MouseEvent, entry: CashflowEntry, isCcPaid: boolean, isVariable: boolean, rowContext: RowContext) {
     e.preventDefault()
     const isW2 = !!(rowContext.budgetItemId && w2Set.has(rowContext.budgetItemId))
     setCtxMenu({ x: e.clientX, y: e.clientY, entry, isCcPaid, isVariable, isW2, rowContext })
-  }, [w2Set])
+  }
+
+  function openRowContextMenu(e: React.MouseEvent, row: YearRow) {
+    e.preventDefault()
+    const isCcPaid = !!(row.budgetItemId && ccPaidSet.has(row.budgetItemId))
+    const isVariable = !!(row.budgetItemId && variableSet.has(row.budgetItemId))
+    setRowMenu({ x: e.clientX, y: e.clientY, row, isCcPaid, isVariable })
+  }
+
+  function openCategoryContextMenu(e: React.MouseEvent, category: string) {
+    e.preventDefault()
+    setCategoryMenu({
+      x: e.clientX,
+      y: e.clientY,
+      category,
+      showSubtotal: !!visibleCategorySubtotals[category],
+    })
+  }
 
   function handleCtxAction(action: string) {
     if (!ctxMenu) return
@@ -231,6 +322,19 @@ export function CashFlowYearView({ year }: { year: number }) {
         })
         break
       }
+      case 'clear-cell': {
+        if (entry.budget_item_id) {
+          updateEntry.mutate(
+            { id: entry.id, actual_amount: null },
+            { onError: () => toast.error('Failed to clear cell') }
+          )
+        } else {
+          deleteEntry.mutate(entry.id, {
+            onError: () => toast.error('Failed to clear cell'),
+          })
+        }
+        break
+      }
       case 'toggle-cc': {
         if (!rowContext.budgetItemId) {
           toast.error('Only budget items can be toggled')
@@ -265,6 +369,189 @@ export function CashFlowYearView({ year }: { year: number }) {
     setCtxMenu(null)
   }
 
+  function handleRowAction(action: string) {
+    if (!rowMenu) return
+
+    switch (action) {
+      case 'rename':
+        setRenameRowState({ row: rowMenu.row, name: rowMenu.row.name })
+        break
+      case 'delete':
+        setDeleteRowState({ row: rowMenu.row, name: rowMenu.row.name })
+        break
+      case 'change-category':
+        setEditCategoryState({
+          row: rowMenu.row,
+          category: rowMenu.row.category as Exclude<ItemCategory, 'income'>,
+        })
+        break
+      case 'toggle-cc':
+        if (!rowMenu.row.budgetItemId) {
+          toast.error('Only budget items can be toggled')
+          break
+        }
+        updateBudgetItem.mutate(
+          { id: rowMenu.row.budgetItemId, cc_paid: !rowMenu.isCcPaid },
+          {
+            onSuccess: () => toast.success(rowMenu.isCcPaid ? 'Removed CC flag' : 'Marked as CC paid'),
+            onError: () => toast.error('Failed to update'),
+          }
+        )
+        break
+      case 'toggle-variable':
+        if (!rowMenu.row.budgetItemId) {
+          toast.error('Only budget items can be toggled')
+          break
+        }
+        updateBudgetItem.mutate(
+          { id: rowMenu.row.budgetItemId, is_variable: !rowMenu.isVariable },
+          {
+            onSuccess: () => toast.success(rowMenu.isVariable ? 'Removed variable flag' : 'Marked as variable'),
+            onError: () => toast.error('Failed to update'),
+          }
+        )
+        break
+    }
+
+    setRowMenu(null)
+  }
+
+  async function handleRenameRow(name: string) {
+    if (!renameRowState) return
+
+    const nextName = name.trim()
+    if (!nextName) return
+
+    const row = renameRowState.row
+    try {
+      if (row.budgetItemId) {
+        const { error: itemError } = await supabase
+          .from('budget_items')
+          .update({ name: nextName })
+          .eq('id', row.budgetItemId)
+
+        if (itemError) throw itemError
+
+        const { error: entriesError } = await supabase
+          .from('cashflow_entries')
+          .update({ name: nextName })
+          .eq('budget_item_id', row.budgetItemId)
+
+        if (entriesError) throw entriesError
+      } else {
+        const entryIds = row.entries.filter((entry): entry is CashflowEntry => entry != null).map((entry) => entry.id)
+        if (entryIds.length === 0) return
+
+        const { error } = await supabase
+          .from('cashflow_entries')
+          .update({ name: nextName })
+          .in('id', entryIds)
+
+        if (error) throw error
+      }
+
+      toast.success('Row renamed')
+      queryClient.invalidateQueries({ queryKey: ['budget_items'] })
+      queryClient.invalidateQueries({ queryKey: ['cashflow_entries'] })
+      setRenameRowState(null)
+    } catch {
+      toast.error('Failed to rename row')
+    }
+  }
+
+  async function handleDeleteRow() {
+    if (!deleteRowState) return
+
+    const row = deleteRowState.row
+    try {
+      if (row.budgetItemId) {
+        const { error: entriesError } = await supabase
+          .from('cashflow_entries')
+          .delete()
+          .eq('budget_item_id', row.budgetItemId)
+
+        if (entriesError) throw entriesError
+
+        const { error: itemError } = await supabase
+          .from('budget_items')
+          .delete()
+          .eq('id', row.budgetItemId)
+
+        if (itemError) throw itemError
+      } else {
+        const entryIds = row.entries.filter((entry): entry is CashflowEntry => entry != null).map((entry) => entry.id)
+        if (entryIds.length === 0) return
+
+        const { error } = await supabase
+          .from('cashflow_entries')
+          .delete()
+          .in('id', entryIds)
+
+        if (error) throw error
+      }
+
+      toast.success('Row deleted')
+      queryClient.invalidateQueries({ queryKey: ['budget_items'] })
+      queryClient.invalidateQueries({ queryKey: ['cashflow_entries'] })
+      setDeleteRowState(null)
+    } catch {
+      toast.error('Failed to delete row')
+    }
+  }
+
+  async function handleUpdateRowCategory(category: Exclude<ItemCategory, 'income'>) {
+    if (!editCategoryState) return
+
+    const row = editCategoryState.row
+    try {
+      if (row.budgetItemId) {
+        const { error: itemError } = await supabase
+          .from('budget_items')
+          .update({ category, is_income: false })
+          .eq('id', row.budgetItemId)
+
+        if (itemError) throw itemError
+
+        const { error: entriesError } = await supabase
+          .from('cashflow_entries')
+          .update({ category })
+          .eq('budget_item_id', row.budgetItemId)
+
+        if (entriesError) throw entriesError
+      } else {
+        const entryIds = row.entries.filter((entry): entry is CashflowEntry => entry != null).map((entry) => entry.id)
+        if (entryIds.length === 0) return
+
+        const { error } = await supabase
+          .from('cashflow_entries')
+          .update({ category })
+          .in('id', entryIds)
+
+        if (error) throw error
+      }
+
+      toast.success('Category updated')
+      queryClient.invalidateQueries({ queryKey: ['budget_items'] })
+      queryClient.invalidateQueries({ queryKey: ['cashflow_entries'] })
+      setEditCategoryState(null)
+    } catch {
+      toast.error('Failed to update category')
+    }
+  }
+
+  function handleCategoryMenuAction(action: string) {
+    if (!categoryMenu) return
+
+    if (action === 'toggle-subtotal') {
+      setVisibleCategorySubtotals((prev) => ({
+        ...prev,
+        [categoryMenu.category]: !prev[categoryMenu.category],
+      }))
+    }
+
+    setCategoryMenu(null)
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -285,6 +572,12 @@ export function CashFlowYearView({ year }: { year: number }) {
 
   const { expenseRows, incomeRows, expensesByCategory } = buildRows(entries)
 
+  const today = new Date()
+  const currentMonth = today.getMonth() // 0-indexed
+  const isCurrentYear = year === today.getFullYear()
+  const monthStatuses = monthHeaders.map((_, i) => getMonthStatus(year, i, today))
+  const firstOpenMonthIndex = monthStatuses.findIndex((status) => status !== 'past')
+
   // Quarterly tax amounts per month (0-indexed)
   const quarterlyTaxByMonth = monthHeaders.map((_, i) =>
     quarterlyTaxAmount > 0 && quarterlyTaxMonths.includes(i + 1) ? quarterlyTaxAmount : 0
@@ -298,20 +591,35 @@ export function CashFlowYearView({ year }: { year: number }) {
 
   const totalExpensesYear = expenseMonthTotals.reduce((a, b) => a + b, 0)
   const totalIncomeYear = incomeMonthTotals.reduce((a, b) => a + b, 0)
+  const openExpenseTotal = expenseMonthTotals.reduce((sum, total, i) => (
+    monthStatuses[i] === 'past' ? sum : sum + total
+  ), 0)
+  const openIncomeTotal = incomeMonthTotals.reduce((sum, total, i) => (
+    monthStatuses[i] === 'past' ? sum : sum + total
+  ), 0)
 
-  // Cumulative savings: running total of (income - expenses) each month
-  const cumulativeSavings = savingsMonthTotals.reduce<number[]>((acc, val) => {
-    acc.push((acc.length > 0 ? acc[acc.length - 1] : 0) + val)
+  // Cumulative savings starts at the first open month. Past months stay historical only.
+  const cumulativeSavings = savingsMonthTotals.reduce<Array<number | null>>((acc, val, i) => {
+    if (monthStatuses[i] === 'past') {
+      acc.push(null)
+      return acc
+    }
+
+    const previous = acc.length === 0 ? 0 : (acc[acc.length - 1] ?? 0)
+    acc.push(previous + val)
     return acc
   }, [])
 
   const orderedExpenseCategories = expenseCategoryOrder.filter((cat) => expensesByCategory[cat]?.length > 0)
 
-  const currentMonth = new Date().getMonth() // 0-indexed
-
   // For the top summary bar: current cash position + projected year-end
   const currentCash = netCash
-  const yearEndProjected = currentCash + (totalIncomeYear - totalExpensesYear)
+  const yearEndSavings = [...cumulativeSavings].reverse().find((value) => value != null) ?? null
+  const yearEndProjected = yearEndSavings == null ? null : currentCash + yearEndSavings
+  const currentMonthNet =
+    firstOpenMonthIndex === -1
+      ? null
+      : savingsMonthTotals[firstOpenMonthIndex]
 
   return (
     <div className="space-y-4">
@@ -329,16 +637,21 @@ export function CashFlowYearView({ year }: { year: number }) {
           <span className="text-muted-foreground">Net Cash </span>
           <span className={`font-mono tabular-nums font-medium ${currentCash >= 0 ? '' : 'text-destructive'}`}>{fmtFull(currentCash)}</span>
         </div>
-        <div className="border-l border-border" />
         <div>
-          <span className="text-muted-foreground">Saved YTD </span>
-          <span className={`font-mono tabular-nums font-medium ${cumulativeSavings[currentMonth] >= 0 ? 'text-success' : 'text-destructive'}`}>
-            {fmtFull(cumulativeSavings[currentMonth] ?? 0)}
+          <span className="text-muted-foreground">Open Month Net </span>
+          <span className={`font-mono tabular-nums font-medium ${
+            currentMonthNet == null ? 'text-muted-foreground' : currentMonthNet >= 0 ? 'text-success' : 'text-destructive'
+          }`}>
+            {currentMonthNet == null ? '—' : fmtFull(currentMonthNet)}
           </span>
         </div>
         <div>
           <span className="text-muted-foreground">Year-End Projected </span>
-          <span className={`font-mono tabular-nums font-medium ${yearEndProjected >= 0 ? 'text-success' : 'text-destructive'}`}>{fmtFull(yearEndProjected)}</span>
+          <span className={`font-mono tabular-nums font-medium ${
+            yearEndProjected == null ? 'text-muted-foreground' : yearEndProjected >= 0 ? 'text-success' : 'text-destructive'
+          }`}>
+            {yearEndProjected == null ? '—' : fmtFull(yearEndProjected)}
+          </span>
         </div>
       </div>
 
@@ -350,18 +663,19 @@ export function CashFlowYearView({ year }: { year: number }) {
           <h2 className="text-base font-semibold tracking-tight">Expenses</h2>
         </div>
         <div className="px-4 pb-4">
-          <table className="w-full text-xs border-collapse min-w-[900px]">
+          <table className="w-full text-xs border-collapse min-w-[860px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[180px] sticky left-0 bg-card z-10" />
+                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[72px] sticky left-0 bg-card z-20" />
+                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[146px] sticky left-[72px] bg-card z-10" />
                 {monthHeaders.map((m, i) => (
                   <th
                     key={m}
                     className={`text-right py-2 px-1.5 font-medium uppercase tracking-wider min-w-[70px] ${
-                      i === currentMonth && year === new Date().getFullYear()
+                      monthStatuses[i] === 'current'
                         ? 'text-accent'
                         : 'text-muted-foreground'
-                    }`}
+                    } ${getMonthGridClass(monthStatuses[i], i)}`}
                   >
                     {m}
                   </th>
@@ -384,11 +698,14 @@ export function CashFlowYearView({ year }: { year: number }) {
                     rows={rows}
                     catMonthTotals={catMonthTotals}
                     catYearTotal={catYearTotal}
-                    currentMonth={currentMonth}
+                    monthStatuses={monthStatuses}
                     currentYear={year}
                     ccPaidSet={ccPaidSet}
                     variableSet={variableSet}
                     onContextMenu={openContextMenu}
+                    onRowContextMenu={openRowContextMenu}
+                    onCategoryContextMenu={openCategoryContextMenu}
+                    showSubtotal={!!visibleCategorySubtotals[cat]}
                     bgClass="bg-card"
                   />
                 )
@@ -396,58 +713,46 @@ export function CashFlowYearView({ year }: { year: number }) {
 
               {/* CC PAYMENT ROW */}
               {ccAccounts.length > 0 && (
-                <>
-                  <tr className="border-t border-border/50">
-                    <td
-                      colSpan={14}
-                      className="pt-2 pb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground sticky left-0 bg-card z-10"
-                    >
+                  <tr className="group border-t border-border/40 hover:bg-secondary/25 transition-colors">
+                    <td className="w-[72px] min-w-[72px] align-top py-1 pr-2 text-[8px] font-medium uppercase tracking-[0.2em] text-muted-foreground/70 sticky left-0 bg-card group-hover:bg-secondary/25 z-20">
                       Credit Card
                     </td>
-                  </tr>
-                  <tr className="group hover:bg-secondary/30 transition-colors">
-                    <td className="py-1.5 pr-2 text-sm sticky left-0 bg-card group-hover:bg-secondary/30 z-10 transition-colors">
+                    <td className="py-1 pr-2 text-[13px] sticky left-[72px] bg-card group-hover:bg-secondary/25 z-10 transition-colors">
                       CC Payment
                     </td>
                     {monthHeaders.map((_, i) => {
-                      const isCurrent = i === currentMonth && year === new Date().getFullYear()
-                      const isNext = i === currentMonth + 1 && year === new Date().getFullYear()
+                      const status = monthStatuses[i]
+                      const isCurrent = status === 'current'
+                      const isNext = isCurrentYear && i === currentMonth + 1
                       let cellValue = 0
                       if (isCurrent) cellValue = ccBalance
                       else if (isNext && ccRollover > 0) cellValue = ccRollover
                       return (
                         <td
                           key={i}
-                          className={`text-right py-1.5 px-1.5 font-mono tabular-nums ${isCurrent ? 'bg-accent/5' : ''} ${
+                          className={`text-right py-1 px-1.5 font-mono tabular-nums ${isCurrent ? 'bg-accent/5' : ''} ${
                             cellValue > 0 ? '' : 'text-muted-foreground/50'
-                          }`}
+                          } ${getMonthGridClass(status, i)}`}
                           title={isNext && ccRollover > 0 ? 'Deferred balance from current month' : undefined}
                         >
                           {cellValue > 0 ? fmt(cellValue) : ''}
                         </td>
                       )
                     })}
-                    <td className="text-right py-1.5 pl-2 font-mono tabular-nums text-xs font-medium border-l border-border">
+                    <td className="text-right py-1 pl-2 font-mono tabular-nums text-xs font-medium border-l border-border">
                       {fmt(ccBalance + (ccRollover > 0 ? ccRollover : 0))}
                     </td>
                   </tr>
-                </>
               )}
 
               {/* QUARTERLY TAX ROW (computed from 1099 income × tax rate) */}
               {quarterlyTaxAmount > 0 && (
-                <>
-                  <tr className="border-t border-border/50">
-                    <td
-                      colSpan={14}
-                      className="pt-2 pb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground sticky left-0 bg-card z-10"
-                    >
-                      Estimated Taxes
+                  <tr className="group border-t border-border/40 hover:bg-secondary/25 transition-colors">
+                    <td className="w-[72px] min-w-[72px] align-top py-1 pr-2 text-[8px] font-medium uppercase tracking-[0.2em] text-muted-foreground/70 sticky left-0 bg-card group-hover:bg-secondary/25 z-20">
+                      Est. Tax
                     </td>
-                  </tr>
-                  <tr className="group hover:bg-secondary/30 transition-colors">
                     <td
-                      className="py-1.5 pr-2 text-sm sticky left-0 bg-card group-hover:bg-secondary/30 z-10 transition-colors cursor-pointer"
+                      className="py-1 pr-2 text-[13px] sticky left-[72px] bg-card group-hover:bg-secondary/25 z-10 transition-colors cursor-pointer"
                       onContextMenu={(e) => { e.preventDefault(); setTaxRateMenu({ x: e.clientX, y: e.clientY }) }}
                       title="Right-click to change tax rate"
                     >
@@ -457,34 +762,35 @@ export function CashFlowYearView({ year }: { year: number }) {
                     {quarterlyTaxByMonth.map((amount, i) => (
                       <td
                         key={i}
-                        className={`text-right py-1.5 px-1.5 font-mono tabular-nums ${
-                          i === currentMonth && year === new Date().getFullYear() ? 'bg-accent/5' : ''
-                        } ${amount > 0 ? '' : 'text-muted-foreground/50'}`}
+                        className={`text-right py-1 px-1.5 font-mono tabular-nums ${
+                          monthStatuses[i] === 'current' ? 'bg-accent/5' : ''
+                        } ${amount > 0 ? '' : 'text-muted-foreground/50'} ${getMonthGridClass(monthStatuses[i], i)}`}
                         title={amount > 0 ? `${fmtFull(monthly1099Income)}/mo × 3 × ${Math.round(taxRate * 100)}%` : undefined}
                       >
                         {amount > 0 ? fmt(-amount) : ''}
                       </td>
                     ))}
-                    <td className="text-right py-1.5 pl-2 font-mono tabular-nums text-xs font-medium border-l border-border">
+                    <td className="text-right py-1 pl-2 font-mono tabular-nums text-xs font-medium border-l border-border">
                       {fmt(-totalQuarterlyTax)}
                     </td>
                   </tr>
-                </>
               )}
 
               {/* TOTAL EXPENSES (including CC + quarterly tax) */}
               <tr className="border-t-2 border-foreground/20 font-semibold">
-                <td className="py-2 pr-2 sticky left-0 bg-card z-10 text-xs uppercase tracking-wider">
+                <td className="sticky left-0 bg-card z-20" />
+                <td className="py-2 pr-2 sticky left-[72px] bg-card z-10 text-xs uppercase tracking-wider">
                   Total Expenses
                 </td>
                 {expenseMonthTotals.map((total, i) => {
-                  const isCurrent = i === currentMonth && year === new Date().getFullYear()
-                  const isNext = i === currentMonth + 1 && year === new Date().getFullYear()
+                  const status = monthStatuses[i]
+                  const isCurrent = status === 'current'
+                  const isNext = isCurrentYear && i === currentMonth + 1
                   let ccForMonth = 0
                   if (isCurrent) ccForMonth = ccBalance
                   else if (isNext && ccRollover > 0) ccForMonth = ccRollover
                   return (
-                    <td key={i} className="text-right py-2 px-1.5 font-mono tabular-nums text-destructive">
+                    <td key={i} className={`text-right py-2 px-1.5 font-mono tabular-nums text-destructive ${getMonthGridClass(status, i)}`}>
                       {fmt(total + ccForMonth)}
                     </td>
                   )
@@ -504,18 +810,19 @@ export function CashFlowYearView({ year }: { year: number }) {
           <h2 className="text-base font-semibold tracking-tight">Income</h2>
         </div>
         <div className="px-4 pb-4">
-          <table className="w-full text-xs border-collapse min-w-[900px]">
+          <table className="w-full text-xs border-collapse min-w-[860px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[180px] sticky left-0 bg-card z-10" />
+                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[72px] sticky left-0 bg-card z-20" />
+                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[146px] sticky left-[72px] bg-card z-10" />
                 {monthHeaders.map((m, i) => (
                   <th
                     key={m}
                     className={`text-right py-2 px-1.5 font-medium uppercase tracking-wider min-w-[70px] ${
-                      i === currentMonth && year === new Date().getFullYear()
+                      monthStatuses[i] === 'current'
                         ? 'text-accent'
                         : 'text-muted-foreground'
-                    }`}
+                    } ${getMonthGridClass(monthStatuses[i], i)}`}
                   >
                     {m}
                   </th>
@@ -527,16 +834,29 @@ export function CashFlowYearView({ year }: { year: number }) {
             </thead>
             <tbody>
               {incomeRows.map((row) => (
-                <EntryRow key={row.key} row={row} currentMonth={currentMonth} currentYear={year} year={year} ccPaidSet={ccPaidSet} variableSet={variableSet} w2Set={w2Set} onContextMenu={openContextMenu} bgClass="bg-card" />
+                <EntryRow
+                  key={row.key}
+                  row={row}
+                  year={year}
+                  monthStatuses={monthStatuses}
+                  ccPaidSet={ccPaidSet}
+                  variableSet={variableSet}
+                  w2Set={w2Set}
+                  onContextMenu={openContextMenu}
+                  onRowContextMenu={openRowContextMenu}
+                  bgClass="bg-card"
+                  categoryCell={<td className="w-[72px] min-w-[72px] sticky left-0 bg-card group-hover:bg-secondary/25 z-20" />}
+                />
               ))}
 
               {/* TOTAL INCOME */}
               <tr className="border-t-2 border-foreground/20 font-semibold">
-                <td className="py-2 pr-2 sticky left-0 bg-card z-10 text-xs uppercase tracking-wider">
+                <td className="sticky left-0 bg-card z-20" />
+                <td className="py-2 pr-2 sticky left-[72px] bg-card z-10 text-xs uppercase tracking-wider">
                   Total Income
                 </td>
                 {incomeMonthTotals.map((total, i) => (
-                  <td key={i} className="text-right py-2 px-1.5 font-mono tabular-nums text-success">
+                  <td key={i} className={`text-right py-2 px-1.5 font-mono tabular-nums text-success ${getMonthGridClass(monthStatuses[i], i)}`}>
                     {fmt(total)}
                   </td>
                 ))}
@@ -555,18 +875,19 @@ export function CashFlowYearView({ year }: { year: number }) {
           <h2 className="text-base font-semibold tracking-tight">Savings</h2>
         </div>
         <div className="px-4 pb-4">
-          <table className="w-full text-xs border-collapse min-w-[900px]">
+          <table className="w-full text-xs border-collapse min-w-[860px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[180px] sticky left-0 bg-card z-10" />
+                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[72px] sticky left-0 bg-card z-20" />
+                <th className="text-left py-2 pr-2 font-medium text-muted-foreground uppercase tracking-wider w-[146px] sticky left-[72px] bg-card z-10" />
                 {monthHeaders.map((m, i) => (
                   <th
                     key={m}
                     className={`text-right py-2 px-1.5 font-medium uppercase tracking-wider min-w-[70px] ${
-                      i === currentMonth && year === new Date().getFullYear()
+                      monthStatuses[i] === 'current'
                         ? 'text-accent'
                         : 'text-muted-foreground'
-                    }`}
+                    } ${getMonthGridClass(monthStatuses[i], i)}`}
                   >
                     {m}
                   </th>
@@ -578,7 +899,8 @@ export function CashFlowYearView({ year }: { year: number }) {
             </thead>
             <tbody>
               <tr className="font-semibold">
-                <td className="py-2 pr-2 sticky left-0 bg-card z-10 text-xs uppercase tracking-wider">
+                <td className="sticky left-0 bg-card z-20" />
+                <td className="py-2 pr-2 sticky left-[72px] bg-card z-10 text-xs uppercase tracking-wider">
                   Saved / Spent
                 </td>
                 {savingsMonthTotals.map((total, i) => (
@@ -586,41 +908,42 @@ export function CashFlowYearView({ year }: { year: number }) {
                     key={i}
                     className={`text-right py-2 px-1.5 font-mono tabular-nums ${
                       total >= 0 ? 'text-success' : 'text-destructive'
-                    }`}
+                    } ${getMonthGridClass(monthStatuses[i], i)}`}
                   >
                     {fmt(total)}
                   </td>
                 ))}
                 <td
                   className={`text-right py-2 pl-2 font-mono tabular-nums border-l border-border ${
-                    totalIncomeYear - totalExpensesYear >= 0 ? 'text-success' : 'text-destructive'
+                    openIncomeTotal - openExpenseTotal >= 0 ? 'text-success' : 'text-destructive'
                   }`}
                 >
-                  {fmtFull(totalIncomeYear - totalExpensesYear)}
+                  {fmtFull(openIncomeTotal - openExpenseTotal)}
                 </td>
               </tr>
 
               {/* Cumulative savings */}
               <tr className="font-semibold">
-                <td className="py-2 pr-2 sticky left-0 bg-card z-10 text-xs uppercase tracking-wider">
+                <td className="sticky left-0 bg-card z-20" />
+                <td className="py-2 pr-2 sticky left-[72px] bg-card z-10 text-xs uppercase tracking-wider">
                   Cumulative Savings
                 </td>
                 {cumulativeSavings.map((total, i) => (
                   <td
                     key={i}
                     className={`text-right py-2 px-1.5 font-mono tabular-nums ${
-                      total >= 0 ? 'text-success' : 'text-destructive'
+                      total == null ? 'text-muted-foreground' : total >= 0 ? 'text-success' : 'text-destructive'
                     }`}
                   >
-                    {fmtFull(total)}
+                    {total == null ? '—' : fmtFull(total)}
                   </td>
                 ))}
                 <td
                   className={`text-right py-2 pl-2 font-mono tabular-nums border-l border-border ${
-                    totalIncomeYear - totalExpensesYear >= 0 ? 'text-success' : 'text-destructive'
+                    yearEndSavings == null ? 'text-muted-foreground' : yearEndSavings >= 0 ? 'text-success' : 'text-destructive'
                   }`}
                 >
-                  {fmtFull(totalIncomeYear - totalExpensesYear)}
+                  {yearEndSavings == null ? '—' : fmtFull(yearEndSavings)}
                 </td>
               </tr>
             </tbody>
@@ -657,6 +980,22 @@ export function CashFlowYearView({ year }: { year: number }) {
       />
     )}
 
+    {rowMenu && (
+      <RowContextMenu
+        state={rowMenu}
+        onAction={handleRowAction}
+        onClose={() => setRowMenu(null)}
+      />
+    )}
+
+    {categoryMenu && (
+      <CategoryContextMenu
+        state={categoryMenu}
+        onAction={handleCategoryMenuAction}
+        onClose={() => setCategoryMenu(null)}
+      />
+    )}
+
     {/* Tax Rate Context Menu */}
     {taxRateMenu && (
       <TaxRateMenu
@@ -675,6 +1014,36 @@ export function CashFlowYearView({ year }: { year: number }) {
         onClose={() => setTaxRateMenu(null)}
       />
     )}
+
+    {renameRowState && (
+      <RenameRowDialog
+        key={renameRowState.row.key}
+        state={renameRowState}
+        onSave={handleRenameRow}
+        onOpenChange={(open) => {
+          if (!open) setRenameRowState(null)
+        }}
+      />
+    )}
+
+    <DeleteRowDialog
+      state={deleteRowState}
+      onConfirm={handleDeleteRow}
+      onOpenChange={(open) => {
+        if (!open) setDeleteRowState(null)
+      }}
+    />
+
+    {editCategoryState && (
+      <UpdateCategoryDialog
+        key={editCategoryState.row.key}
+        state={editCategoryState}
+        onSave={handleUpdateRowCategory}
+        onOpenChange={(open) => {
+          if (!open) setEditCategoryState(null)
+        }}
+      />
+    )}
     </div>
   )
 }
@@ -684,51 +1053,71 @@ function CategorySection({
   rows,
   catMonthTotals,
   catYearTotal,
-  currentMonth,
+  monthStatuses,
   currentYear,
   ccPaidSet,
   variableSet,
   w2Set,
   onContextMenu,
+  onRowContextMenu,
+  onCategoryContextMenu,
+  showSubtotal,
   bgClass = 'bg-background',
 }: {
   category: string
   rows: YearRow[]
   catMonthTotals: number[]
   catYearTotal: number
-  currentMonth: number
+  monthStatuses: MonthStatus[]
   currentYear: number
   ccPaidSet: Set<string>
   variableSet: Set<string>
   w2Set?: Set<string>
   onContextMenu: (e: React.MouseEvent, entry: CashflowEntry, isCcPaid: boolean, isVariable: boolean, rowContext: RowContext) => void
+  onRowContextMenu: (e: React.MouseEvent, row: YearRow) => void
+  onCategoryContextMenu: (e: React.MouseEvent, category: string) => void
+  showSubtotal: boolean
   bgClass?: string
 }) {
+  const showCategorySubtotal = showSubtotal && rows.length > 1
+  const categoryRowSpan = rows.length + (showCategorySubtotal ? 1 : 0)
+
   return (
     <>
-      {/* Category header */}
-      <tr className="border-t border-border/50">
-        <td
-          colSpan={14}
-          className={`pt-2 pb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground sticky left-0 ${bgClass} z-10`}
-        >
-          {categoryLabels[category] ?? category}
-        </td>
-      </tr>
-
-      {/* Item rows */}
-      {rows.map((row) => (
-        <EntryRow key={row.key} row={row} currentMonth={currentMonth} currentYear={currentYear} year={currentYear} ccPaidSet={ccPaidSet} variableSet={variableSet} w2Set={w2Set} onContextMenu={onContextMenu} bgClass={bgClass} />
+      {rows.map((row, index) => (
+        <EntryRow
+          key={row.key}
+          row={row}
+          year={currentYear}
+          monthStatuses={monthStatuses}
+          ccPaidSet={ccPaidSet}
+          variableSet={variableSet}
+          w2Set={w2Set}
+          onContextMenu={onContextMenu}
+          onRowContextMenu={onRowContextMenu}
+          bgClass={bgClass}
+          isCategoryStart={index === 0}
+          categoryCell={index === 0 ? (
+            <td
+              rowSpan={categoryRowSpan}
+              className={`w-[72px] min-w-[72px] align-top py-1 pr-2 text-[8px] font-medium uppercase tracking-[0.2em] text-muted-foreground/70 sticky left-0 ${bgClass} z-20 cursor-context-menu`}
+              onContextMenu={(e) => onCategoryContextMenu(e, category)}
+              title="Right-click for category options"
+            >
+              {categoryLabels[category] ?? category}
+            </td>
+          ) : null}
+        />
       ))}
 
       {/* Category subtotal */}
-      {rows.length > 1 && (
-        <tr className="border-t border-border/30">
-          <td className={`py-1 pr-2 text-right text-[10px] text-muted-foreground italic sticky left-0 ${bgClass} z-10`}>
+      {showCategorySubtotal && (
+        <tr className="border-t border-border/20">
+          <td className={`py-1 pr-2 text-right text-[10px] text-muted-foreground italic sticky left-[72px] ${bgClass} z-10`}>
             {categoryLabels[category]} total
           </td>
           {catMonthTotals.map((total, i) => (
-            <td key={i} className="text-right py-1 px-1.5 font-mono tabular-nums text-[10px] text-muted-foreground">
+            <td key={i} className={`text-right py-1 px-1.5 font-mono tabular-nums text-[10px] text-muted-foreground ${getMonthGridClass(monthStatuses[i], i)}`}>
               {fmt(total)}
             </td>
           ))}
@@ -741,16 +1130,22 @@ function CategorySection({
   )
 }
 
-function EntryRow({ row, currentMonth, currentYear, year, ccPaidSet, variableSet, w2Set, onContextMenu, bgClass = 'bg-background' }: { row: YearRow; currentMonth: number; currentYear: number; year: number; ccPaidSet: Set<string>; variableSet: Set<string>; w2Set?: Set<string>; onContextMenu: (e: React.MouseEvent, entry: CashflowEntry, isCcPaid: boolean, isVariable: boolean, rowContext: RowContext) => void; bgClass?: string }) {
+function EntryRow({ row, year, monthStatuses, ccPaidSet, variableSet, w2Set, onContextMenu, onRowContextMenu, bgClass = 'bg-background', categoryCell = null, isCategoryStart = false }: { row: YearRow; year: number; monthStatuses: MonthStatus[]; ccPaidSet: Set<string>; variableSet: Set<string>; w2Set?: Set<string>; onContextMenu: (e: React.MouseEvent, entry: CashflowEntry, isCcPaid: boolean, isVariable: boolean, rowContext: RowContext) => void; onRowContextMenu: (e: React.MouseEvent, row: YearRow) => void; bgClass?: string; categoryCell?: React.ReactNode; isCategoryStart?: boolean }) {
   const yearTotal = sumRowTotal(row)
   const isExpense = row.category !== 'income'
   const isCcPaid = !!(row.budgetItemId && ccPaidSet.has(row.budgetItemId))
   const isVariable = !!(row.budgetItemId && variableSet.has(row.budgetItemId))
   const isW2 = !!(row.budgetItemId && w2Set?.has(row.budgetItemId))
+  const nameLeftClass = categoryCell ? 'left-[72px]' : 'left-0'
 
   return (
-    <tr className="group hover:bg-secondary/30 transition-colors">
-      <td className={`py-1.5 pr-2 text-sm truncate max-w-[180px] sticky left-0 ${bgClass} group-hover:bg-secondary/30 z-10 transition-colors`}>
+    <tr className={`group hover:bg-secondary/25 transition-colors ${isCategoryStart ? 'border-t border-border/40' : ''}`}>
+      {categoryCell}
+      <td
+        className={`py-1 pr-2 text-[13px] truncate max-w-[146px] sticky ${nameLeftClass} ${bgClass} group-hover:bg-secondary/25 z-10 transition-colors cursor-context-menu`}
+        onContextMenu={(e) => onRowContextMenu(e, row)}
+        title="Right-click for row options"
+      >
         {row.name}
         {isCcPaid && <span className="ml-1 text-[9px] text-muted-foreground">CC</span>}
         {isW2 && <span className="ml-1 text-[9px] text-muted-foreground">W2</span>}
@@ -759,7 +1154,7 @@ function EntryRow({ row, currentMonth, currentYear, year, ccPaidSet, variableSet
         <YearCell
           key={i}
           entry={entry}
-          isCurrentMonth={i === currentMonth && currentYear === new Date().getFullYear()}
+          monthStatus={monthStatuses[i]}
           isExpense={isExpense}
           isCcPaid={isCcPaid}
           isVariable={isVariable}
@@ -769,7 +1164,7 @@ function EntryRow({ row, currentMonth, currentYear, year, ccPaidSet, variableSet
         />
       ))}
       <td
-        className={`text-right py-1.5 pl-2 font-mono tabular-nums text-xs font-medium border-l border-border ${
+        className={`text-right py-1 pl-2 font-mono tabular-nums text-xs font-medium border-l border-border ${
           isExpense ? '' : 'text-success'
         }`}
       >
@@ -797,9 +1192,34 @@ interface ContextMenuState {
   rowContext: RowContext
 }
 
+interface RowMenuState {
+  x: number
+  y: number
+  row: YearRow
+  isCcPaid: boolean
+  isVariable: boolean
+}
+
+interface RowActionState {
+  row: YearRow
+  name: string
+}
+
+interface RowCategoryState {
+  row: YearRow
+  category: Exclude<ItemCategory, 'income'>
+}
+
+interface CategoryMenuState {
+  x: number
+  y: number
+  category: string
+  showSubtotal: boolean
+}
+
 function YearCell({
   entry,
-  isCurrentMonth,
+  monthStatus,
   isExpense,
   isCcPaid,
   isVariable,
@@ -808,7 +1228,7 @@ function YearCell({
   onContextMenu,
 }: {
   entry: CashflowEntry | null
-  isCurrentMonth: boolean
+  monthStatus: MonthStatus
   isExpense: boolean
   isCcPaid: boolean
   isVariable: boolean
@@ -821,6 +1241,9 @@ function YearCell({
   const inputRef = useRef<HTMLInputElement>(null)
   const updateEntry = useUpdateCashflowEntry()
   const createEntry = useCreateCashflowEntry()
+  const deleteEntry = useDeleteCashflowEntry()
+  const isCurrentMonth = monthStatus === 'current'
+  const isPastMonth = monthStatus === 'past'
 
   useEffect(() => {
     if (editing) inputRef.current?.select()
@@ -840,9 +1263,9 @@ function YearCell({
 
   function handleClick() {
     if (entry) {
-      if (isVariable && spent != null) {
-        // When editing a variable item, show the spent amount for editing
-        setEditValue(String(spent))
+      if (isVariable) {
+        // Variable expense cells edit "spent so far", not the full budget.
+        setEditValue(spent != null ? String(spent) : '')
       } else {
         setEditValue(String(Math.abs(Number(entry.actual_amount ?? entry.projected_amount))))
       }
@@ -859,13 +1282,48 @@ function YearCell({
   }
 
   function handleSave() {
-    const parsed = parseFloat(editValue)
     setEditing(false)
-    if (isNaN(parsed) || parsed === 0) return
+    const rawValue = editValue.trim()
+
+    if (rawValue === '') {
+      if (entry) {
+        if (entry.budget_item_id) {
+          updateEntry.mutate(
+            { id: entry.id, actual_amount: null },
+            { onError: () => toast.error('Failed to clear cell') }
+          )
+        } else {
+          deleteEntry.mutate(entry.id, {
+            onError: () => toast.error('Failed to clear cell'),
+          })
+        }
+      }
+      return
+    }
+
+    const parsed = parseFloat(rawValue)
+    if (isNaN(parsed)) return
+    if (parsed === 0) {
+      if (entry) {
+        if (entry.budget_item_id) {
+          updateEntry.mutate(
+            { id: entry.id, actual_amount: null },
+            { onError: () => toast.error('Failed to clear cell') }
+          )
+        } else {
+          deleteEntry.mutate(entry.id, {
+            onError: () => toast.error('Failed to clear cell'),
+          })
+        }
+      }
+      return
+    }
+
+    const normalizedAmount = isExpense ? Math.abs(parsed) : parsed
 
     if (entry) {
       updateEntry.mutate(
-        { id: entry.id, actual_amount: parsed },
+        { id: entry.id, actual_amount: normalizedAmount },
         { onError: () => toast.error('Failed to update') }
       )
     } else {
@@ -873,7 +1331,7 @@ function YearCell({
         {
           year: rowContext.year,
           month: rowContext.monthIndex + 1,
-          projected_amount: parsed,
+          projected_amount: isExpense ? Math.abs(parsed) : parsed,
           budget_item_id: rowContext.budgetItemId,
           name: rowContext.name,
           category: rowContext.category,
@@ -890,7 +1348,7 @@ function YearCell({
 
   if (editing) {
     return (
-      <td className={`py-0.5 px-0.5 relative ${isCurrentMonth ? 'bg-accent/5' : ''}`}>
+      <td className={`py-0 px-0.5 relative ${isCurrentMonth ? 'bg-accent/5' : ''} ${getMonthGridClass(monthStatus, rowContext.monthIndex)}`}>
         <input
           ref={inputRef}
           type="number"
@@ -911,7 +1369,7 @@ function YearCell({
   if (!entry) {
     return (
       <td
-        className={`text-right py-1.5 px-1.5 cursor-pointer hover:bg-secondary/30 transition-colors ${isCurrentMonth ? 'bg-accent/5' : ''}`}
+        className={`text-right py-1 px-1.5 cursor-pointer hover:bg-secondary/25 transition-colors ${isCurrentMonth ? 'bg-accent/5' : ''} ${getMonthGridClass(monthStatus, rowContext.monthIndex)}`}
         onClick={handleClick}
         title={isVariable ? 'Click to enter spending' : 'Click to add amount'}
       />
@@ -930,13 +1388,13 @@ function YearCell({
 
   return (
     <td
-      className={`text-right py-1.5 px-1.5 font-mono tabular-nums cursor-pointer transition-colors ${
+      className={`text-right py-1 px-1.5 font-mono tabular-nums cursor-pointer transition-colors ${
         isCurrentMonth ? 'bg-accent/5' : ''
       } ${entry.is_paid ? 'opacity-40 line-through' : ''} ${
         isHalfPaid ? 'opacity-60' : ''
       } ${
         isExpense ? '' : 'text-success'
-      } ${isVariable && remaining != null && remaining < 0 ? 'text-warning' : ''}`}
+      } ${isVariable && remaining != null && remaining < 0 ? 'text-warning' : ''} ${getMonthGridClass(monthStatus, rowContext.monthIndex)} ${isPastMonth ? 'opacity-45' : ''}`}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       title={w2Title ?? variableTitle ?? 'Click to edit, right-click for options'}
@@ -1035,6 +1493,12 @@ function CellContextMenu({
           </button>
         </>
       )}
+      <button
+        className="flex w-full items-center rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+        onClick={() => onAction('clear-cell')}
+      >
+        Clear Cell
+      </button>
       <div className="my-1 h-px bg-border" />
       <button
         className="flex w-full items-center rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
@@ -1043,6 +1507,268 @@ function CellContextMenu({
         Delete Entry
       </button>
     </div>
+  )
+}
+
+function RowContextMenu({
+  state,
+  onAction,
+  onClose,
+}: {
+  state: RowMenuState
+  onAction: (action: string) => void
+  onClose: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [onClose])
+
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    left: state.x,
+    top: state.y,
+    zIndex: 50,
+  }
+
+  const hasBudgetItem = !!state.row.budgetItemId
+
+  return (
+    <div ref={menuRef} style={style} className="min-w-[170px] rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 animate-in fade-in-0 zoom-in-95">
+      <button
+        className="flex w-full items-center rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+        onClick={() => onAction('rename')}
+      >
+        Rename Row
+      </button>
+      {state.row.category !== 'income' && (
+        <button
+          className="flex w-full items-center rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+          onClick={() => onAction('change-category')}
+        >
+          Change Category
+        </button>
+      )}
+      {hasBudgetItem && (
+        <>
+          <button
+            className="flex w-full items-center rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+            onClick={() => onAction('toggle-cc')}
+          >
+            {state.isCcPaid ? 'Remove CC Flag' : 'Mark as CC Paid'}
+          </button>
+          <button
+            className="flex w-full items-center rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+            onClick={() => onAction('toggle-variable')}
+          >
+            {state.isVariable ? 'Remove Variable' : 'Mark as Variable'}
+          </button>
+        </>
+      )}
+      <div className="my-1 h-px bg-border" />
+      <button
+        className="flex w-full items-center rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+        onClick={() => onAction('delete')}
+      >
+        Delete Row
+      </button>
+    </div>
+  )
+}
+
+function CategoryContextMenu({
+  state,
+  onAction,
+  onClose,
+}: {
+  state: CategoryMenuState
+  onAction: (action: string) => void
+  onClose: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [onClose])
+
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    left: state.x,
+    top: state.y,
+    zIndex: 50,
+  }
+
+  return (
+    <div ref={menuRef} style={style} className="min-w-[170px] rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 animate-in fade-in-0 zoom-in-95">
+      <button
+        className="flex w-full items-center rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+        onClick={() => onAction('toggle-subtotal')}
+      >
+        {state.showSubtotal ? 'Hide Subtotal' : 'Show Subtotal'}
+      </button>
+    </div>
+  )
+}
+
+function RenameRowDialog({
+  state,
+  onSave,
+  onOpenChange,
+}: {
+  state: RowActionState | null
+  onSave: (name: string) => Promise<void>
+  onOpenChange: (open: boolean) => void
+}) {
+  const [name, setName] = useState(state?.name ?? '')
+
+  return (
+    <Dialog open={!!state} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename Row</DialogTitle>
+          <DialogDescription>Update the label shown for this cash flow row.</DialogDescription>
+        </DialogHeader>
+
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault()
+            await onSave(name)
+          }}
+          className="space-y-4"
+        >
+          <div className="space-y-2">
+            <Label htmlFor="rename-row">Name</Label>
+            <Input
+              id="rename-row"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="submit" disabled={!name.trim()}>
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeleteRowDialog({
+  state,
+  onConfirm,
+  onOpenChange,
+}: {
+  state: RowActionState | null
+  onConfirm: () => Promise<void>
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <Dialog open={!!state} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete Row</DialogTitle>
+          <DialogDescription>
+            Delete <strong>{state?.name ?? 'this row'}</strong>? This will remove the row and its linked entries.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" variant="destructive" onClick={() => { void onConfirm() }}>
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function UpdateCategoryDialog({
+  state,
+  onSave,
+  onOpenChange,
+}: {
+  state: RowCategoryState | null
+  onSave: (category: Exclude<ItemCategory, 'income'>) => Promise<void>
+  onOpenChange: (open: boolean) => void
+}) {
+  const [category, setCategory] = useState<Exclude<ItemCategory, 'income'>>(state?.category ?? 'misc')
+
+  return (
+    <Dialog open={!!state} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Change Category</DialogTitle>
+          <DialogDescription>
+            Update the expense category for <strong>{state?.row.name ?? 'this row'}</strong>.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault()
+            await onSave(category)
+          }}
+          className="space-y-4"
+        >
+          <div className="space-y-2">
+            <Label>Expense Category</Label>
+            <Select value={category} onValueChange={(value) => setCategory(value as Exclude<ItemCategory, 'income'>)}>
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(value: string) => expenseCategoryOptions.find((option) => option.value === value)?.label ?? value}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {expenseCategoryOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value} label={option.label}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <DialogFooter>
+            <Button type="submit">
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

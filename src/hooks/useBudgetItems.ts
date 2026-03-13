@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/auth-context'
 import type { BudgetItem, ItemCategory, ItemFrequency, IncomeType } from '@/types/database'
 
 export function useBudgetItems() {

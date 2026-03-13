@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useBudgetItemsByCategory, useDeleteBudgetItem, useUpdateBudgetItem } from '@/hooks/useBudgetItems'
 import { BudgetItemDialog } from './BudgetItemDialog'
 import { GenerateYearButton } from './GenerateYearButton'
-import type { BudgetItem, ItemCategory } from '@/types/database'
+import type { BudgetItem, ItemCategory, IncomeType } from '@/types/database'
 import { toast } from 'sonner'
 
 const categoryLabels: Record<ItemCategory, string> = {
@@ -25,6 +25,17 @@ const categoryOrder: ItemCategory[] = [
   'income', 'housing', 'utilities', 'car', 'food',
   'subscriptions', 'business', 'taxes', 'savings', 'misc',
 ]
+
+const incomeTypeLabels: Record<IncomeType, string> = {
+  w2: 'W2',
+  '1099': '1099',
+  gift: 'Gift',
+  reimbursement: 'Reimbursement',
+  refund: 'Refund',
+  untaxed: 'Other',
+}
+
+const incomeTypeOrder: IncomeType[] = ['w2', '1099', 'gift', 'reimbursement', 'refund', 'untaxed']
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -64,7 +75,16 @@ export function BudgetPage() {
     )
   }
 
-  const orderedCategories = categoryOrder.filter((cat) => grouped[cat]?.length > 0)
+  const incomeItems = grouped.income ?? []
+  const incomeGrouped = incomeItems.reduce<Record<IncomeType, BudgetItem[]>>((acc, item) => {
+    const key = item.income_type ?? 'untaxed'
+    acc[key] = acc[key] || []
+    acc[key].push(item)
+    return acc
+  }, {} as Record<IncomeType, BudgetItem[]>)
+  const orderedIncomeTypes = incomeTypeOrder.filter((type) => incomeGrouped[type]?.length > 0)
+  const orderedExpenseCategories = categoryOrder.filter((cat) => cat !== 'income' && grouped[cat]?.length > 0)
+  const hasItems = orderedIncomeTypes.length > 0 || orderedExpenseCategories.length > 0
 
   return (
     <div className="space-y-6">
@@ -111,44 +131,100 @@ export function BudgetPage() {
       )}
 
       {/* Empty state */}
-      {!isLoading && orderedCategories.length === 0 && (
+      {!isLoading && !hasItems && (
         <p className="text-sm text-muted-foreground py-8 text-center">
           No budget items yet. Add your first item to start planning.
         </p>
       )}
 
-      {/* Items grouped by category */}
-      {orderedCategories.map((cat) => (
-        <div key={cat}>
-          <div className="flex items-center gap-2 mb-2">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {categoryLabels[cat]}
-            </h2>
-            <span className="font-mono text-xs text-muted-foreground tabular-nums">
-              {formatCurrency(
-                grouped[cat].filter((i) => i.active).reduce((s, i) => s + Number(i.monthly_amount), 0)
-              )}
-            </span>
+      {orderedIncomeTypes.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold tracking-tight">Income</h2>
+            <span className="font-mono text-sm text-success tabular-nums">{formatCurrency(totalIncome)}</span>
           </div>
-          <div className="border border-border rounded divide-y divide-border">
-            {grouped[cat].map((item) => (
-              <BudgetItemRow
-                key={item.id}
-                item={item}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-                onToggleActive={handleToggleActive}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
 
-      <BudgetItemDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        editItem={editItem}
-      />
+          {orderedIncomeTypes.map((type) => (
+            <BudgetGroup
+              key={type}
+              label={incomeTypeLabels[type]}
+              total={incomeGrouped[type].filter((item) => item.active).reduce((sum, item) => sum + Number(item.monthly_amount), 0)}
+            >
+              {incomeGrouped[type].map((item) => (
+                <BudgetItemRow
+                  key={item.id}
+                  item={item}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onToggleActive={handleToggleActive}
+                />
+              ))}
+            </BudgetGroup>
+          ))}
+        </section>
+      )}
+
+      {orderedExpenseCategories.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold tracking-tight">Expenses</h2>
+            <span className="font-mono text-sm tabular-nums">{formatCurrency(totalMonthly)}</span>
+          </div>
+
+          {orderedExpenseCategories.map((cat) => (
+            <BudgetGroup
+              key={cat}
+              label={categoryLabels[cat]}
+              total={grouped[cat].filter((item) => item.active).reduce((sum, item) => sum + Number(item.monthly_amount), 0)}
+            >
+              {grouped[cat].map((item) => (
+                <BudgetItemRow
+                  key={item.id}
+                  item={item}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onToggleActive={handleToggleActive}
+                />
+              ))}
+            </BudgetGroup>
+          ))}
+        </section>
+      )}
+
+      {dialogOpen && (
+        <BudgetItemDialog
+          key={editItem?.id ?? 'new'}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          editItem={editItem}
+        />
+      )}
+    </div>
+  )
+}
+
+function BudgetGroup({
+  label,
+  total,
+  children,
+}: {
+  label: string
+  total: number
+  children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </h3>
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">
+          {formatCurrency(total)}
+        </span>
+      </div>
+      <div className="rounded border border-border divide-y divide-border">
+        {children}
+      </div>
     </div>
   )
 }
@@ -170,6 +246,7 @@ function BudgetItemRow({
     yearly: 'Yr',
     one_time: '1x',
   }
+  const incomeTypeLabel = item.is_income && item.income_type ? incomeTypeLabels[item.income_type] : null
 
   return (
     <div
@@ -187,11 +264,16 @@ function BudgetItemRow({
         <Badge variant="secondary" className="text-[10px]">
           {frequencyLabel[item.frequency] ?? item.frequency}
         </Badge>
+        {incomeTypeLabel && (
+          <Badge variant="secondary" className="text-[10px]">
+            {incomeTypeLabel}
+          </Badge>
+        )}
         {item.cc_paid && (
           <span className="text-[10px] text-muted-foreground">CC</span>
         )}
-        {item.is_income && (
-          <span className="text-[10px] text-success font-medium">Income</span>
+        {item.is_variable && (
+          <span className="text-[10px] text-muted-foreground">Variable</span>
         )}
       </div>
 

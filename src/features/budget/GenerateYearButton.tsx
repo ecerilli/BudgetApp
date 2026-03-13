@@ -30,7 +30,7 @@ export function GenerateYearButton() {
       { year, items },
       {
         onSuccess: (count) => {
-          toast.success(`Generated ${count} cash flow entries for ${year}`)
+          toast.success(`Generated and synced ${count} cash flow entries for ${year}`)
           setOpen(false)
         },
         onError: () => toast.error('Failed to generate entries'),
@@ -41,7 +41,7 @@ export function GenerateYearButton() {
   return (
     <>
       <Button variant="outline" onClick={() => setOpen(true)}>
-        Generate Year
+        Generate / Sync Year
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -49,7 +49,7 @@ export function GenerateYearButton() {
           <DialogHeader>
             <DialogTitle>Generate Cash Flow</DialogTitle>
             <DialogDescription>
-              Create monthly entries from your budget items. Existing entries won't be overwritten.
+              Create missing monthly entries and sync existing generated rows with current budget item names, categories, and budgeted amounts.
             </DialogDescription>
           </DialogHeader>
 

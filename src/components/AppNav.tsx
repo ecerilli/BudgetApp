@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/auth-context'
 
 const navItems = [
   { to: '/', label: 'Accounts' },
@@ -13,21 +13,65 @@ export function AppNav() {
   return (
     <>
       {/* Desktop top nav */}
-      <nav className="hidden sm:flex items-center justify-between border-b border-border bg-card px-6 h-14">
-        <div className="flex items-center gap-1">
-          <span className="text-sm font-semibold tracking-tight mr-6">
-            Household Finance
-          </span>
+      <nav className="sticky top-0 z-40 hidden border-b border-border/70 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/72 sm:block">
+        <div className="mx-auto flex h-18 w-full max-w-[1200px] items-center justify-between gap-6 px-6">
+          <div className="flex items-center gap-6">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                Household Finance
+              </p>
+              <p className="text-sm font-semibold tracking-tight text-foreground">
+                Shared cash planning
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1 rounded-full border border-border/80 bg-card/90 p-1 shadow-sm">
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) =>
+                    `rounded-full px-3.5 py-1.5 text-sm transition-colors ${
+                      isActive
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 rounded-full border border-border/80 bg-card/90 px-3 py-2 shadow-sm">
+            <span className="max-w-40 truncate text-xs text-muted-foreground">
+              {profile?.display_name}
+            </span>
+            <button
+              onClick={signOut}
+              className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Mobile bottom nav */}
+      <nav className="fixed inset-x-0 bottom-4 z-50 px-4 sm:hidden">
+        <div className="mx-auto flex h-16 max-w-sm items-center justify-around rounded-[1.25rem] border border-border/80 bg-card/95 px-2 shadow-lg shadow-black/8 backdrop-blur safe-area-bottom">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/'}
               className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md text-sm transition-colors ${
+                `flex min-w-0 flex-1 items-center justify-center rounded-xl px-3 py-2 text-xs font-medium transition-colors ${
                   isActive
-                    ? 'bg-secondary text-foreground font-medium'
-                    : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-foreground text-background'
+                    : 'text-muted-foreground'
                 }`
               }
             >
@@ -35,37 +79,6 @@ export function AppNav() {
             </NavLink>
           ))}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">
-            {profile?.display_name}
-          </span>
-          <button
-            onClick={signOut}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Sign out
-          </button>
-        </div>
-      </nav>
-
-      {/* Mobile bottom nav */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-border bg-card h-14 safe-area-bottom">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) =>
-              `flex flex-col items-center justify-center px-4 py-2 text-xs transition-colors ${
-                isActive
-                  ? 'text-accent font-medium'
-                  : 'text-muted-foreground'
-              }`
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
       </nav>
     </>
   )

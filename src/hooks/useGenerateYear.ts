@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/auth-context'
 import type { BudgetItem, ItemCategory } from '@/types/database'
 
 export function useGenerateYear() {
@@ -36,10 +36,11 @@ export function useGenerateYear() {
 
       if (entries.length === 0) return 0
 
-      // Use upsert with onConflict to skip existing entries (additive)
+      // Sync budget-backed rows for the year so name/category/amount edits
+      // flow into the year view while preserving actuals and paid state.
       const { data, error } = await supabase
         .from('cashflow_entries')
-        .upsert(entries, { onConflict: 'budget_item_id,year,month', ignoreDuplicates: true })
+        .upsert(entries, { onConflict: 'budget_item_id,year,month' })
         .select('id')
 
       if (error) throw error

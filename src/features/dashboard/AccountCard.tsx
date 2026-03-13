@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import type { Account, AccountType } from '@/types/database'
 import { useUpdateAccount, useDeleteAccount } from '@/hooks/useAccounts'
 import { toast } from 'sonner'
@@ -97,13 +97,15 @@ export function AccountCard({ account }: { account: Account }) {
     setCtxMenu({ x: e.clientX, y: e.clientY })
   }
 
-  const handleCtxAction = useCallback((action: string) => {
+  function handleCtxAction(action: string) {
     setCtxMenu(null)
     if (action === 'edit') setShowEdit(true)
     if (action === 'delete') setShowDelete(true)
-  }, [])
+  }
 
-  const closeCtxMenu = useCallback(() => setCtxMenu(null), [])
+  function closeCtxMenu() {
+    setCtxMenu(null)
+  }
 
   const isNegative = Number(account.balance) < 0
   const formattedBalance = formatCurrency(Number(account.balance))
@@ -182,11 +184,13 @@ export function AccountCard({ account }: { account: Account }) {
         <AccountContextMenu position={ctxMenu} onAction={handleCtxAction} onClose={closeCtxMenu} />
       )}
 
-      <EditAccountDialog
-        account={account}
-        open={showEdit}
-        onOpenChange={setShowEdit}
-      />
+      {showEdit && (
+        <EditAccountDialog
+          account={account}
+          open={showEdit}
+          onOpenChange={setShowEdit}
+        />
+      )}
 
       <DeleteAccountDialog
         account={account}
@@ -262,13 +266,6 @@ function EditAccountDialog({
   const [name, setName] = useState(account.name)
   const [type, setType] = useState<AccountType>(account.type)
   const updateAccount = useUpdateAccount()
-
-  useEffect(() => {
-    if (open) {
-      setName(account.name)
-      setType(account.type)
-    }
-  }, [open, account.name, account.type])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
