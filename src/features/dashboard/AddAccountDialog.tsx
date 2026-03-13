@@ -75,7 +75,7 @@ export function AddAccountDialog({
         <DialogHeader>
           <DialogTitle>Add Account</DialogTitle>
           <DialogDescription>
-            Track a financial account on your dashboard.
+            Track a financial account.
           </DialogDescription>
         </DialogHeader>
 
@@ -95,11 +95,11 @@ export function AddAccountDialog({
             <Label>Type</Label>
             <Select value={type} onValueChange={(val) => setType(val as AccountType)}>
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>{(v: string) => accountTypes.find(t => t.value === v)?.label ?? v}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {accountTypes.map((t) => (
-                  <SelectItem key={t.value} value={t.value}>
+                  <SelectItem key={t.value} value={t.value} label={t.label}>
                     {t.label}
                   </SelectItem>
                 ))}

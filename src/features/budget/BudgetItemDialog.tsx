@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useCreateBudgetItem, useUpdateBudgetItem } from '@/hooks/useBudgetItems'
-import type { BudgetItem, ItemCategory, ItemFrequency } from '@/types/database'
+import type { BudgetItem, ItemCategory, ItemFrequency, IncomeType } from '@/types/database'
 import { toast } from 'sonner'
 
 const categories: { value: ItemCategory; label: string }[] = [
@@ -44,6 +44,15 @@ const frequencies: { value: ItemFrequency; label: string }[] = [
 const allMonths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+const incomeTypes: { value: IncomeType; label: string }[] = [
+  { value: 'w2', label: 'W2' },
+  { value: '1099', label: '1099' },
+  { value: 'gift', label: 'Gift' },
+  { value: 'reimbursement', label: 'Reimbursement' },
+  { value: 'refund', label: 'Refund' },
+  { value: 'untaxed', label: 'Other (Untaxed)' },
+]
+
 interface BudgetItemDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -57,7 +66,9 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
   const [frequency, setFrequency] = useState<ItemFrequency>('monthly')
   const [monthsActive, setMonthsActive] = useState<number[]>(allMonths)
   const [isIncome, setIsIncome] = useState(false)
+  const [incomeType, setIncomeType] = useState<IncomeType | null>(null)
   const [ccPaid, setCcPaid] = useState(false)
+  const [isVariable, setIsVariable] = useState(false)
 
   const createItem = useCreateBudgetItem()
   const updateItem = useUpdateBudgetItem()
@@ -70,7 +81,9 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
       setFrequency(editItem.frequency)
       setMonthsActive(editItem.months_active)
       setIsIncome(editItem.is_income)
+      setIncomeType(editItem.income_type ?? null)
       setCcPaid(editItem.cc_paid)
+      setIsVariable(editItem.is_variable)
     } else {
       reset()
     }
@@ -83,7 +96,9 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
     setFrequency('monthly')
     setMonthsActive(allMonths)
     setIsIncome(false)
+    setIncomeType(null)
     setCcPaid(false)
+    setIsVariable(false)
   }
 
   function toggleMonth(m: number) {
@@ -104,6 +119,8 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
       months_active: monthsActive,
       is_income: isIncome,
       cc_paid: ccPaid,
+      is_variable: isVariable,
+      income_type: isIncome ? incomeType : null,
     }
 
     if (editItem) {
@@ -155,11 +172,11 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
               <Label>Category</Label>
               <Select value={category} onValueChange={(v) => setCategory(v as ItemCategory)}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>{(v: string) => categories.find(c => c.value === v)?.label ?? v}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {categories.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
+                    <SelectItem key={c.value} value={c.value} label={c.label}>
                       {c.label}
                     </SelectItem>
                   ))}
@@ -184,11 +201,11 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
             <Label>Frequency</Label>
             <Select value={frequency} onValueChange={(v) => setFrequency(v as ItemFrequency)}>
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue>{(v: string) => frequencies.find(f => f.value === v)?.label ?? v}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {frequencies.map((f) => (
-                  <SelectItem key={f.value} value={f.value}>
+                  <SelectItem key={f.value} value={f.value} label={f.label}>
                     {f.label}
                   </SelectItem>
                 ))}
@@ -235,7 +252,39 @@ export function BudgetItemDialog({ open, onOpenChange, editItem }: BudgetItemDia
               />
               Paid via CC
             </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isVariable}
+                onChange={(e) => setIsVariable(e.target.checked)}
+                className="rounded border-border"
+              />
+              Variable budget
+            </label>
           </div>
+
+          {isIncome && (
+            <div className="space-y-2">
+              <Label>Income Type</Label>
+              <Select value={incomeType ?? ''} onValueChange={(v) => setIncomeType(v as IncomeType)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type…">{(v: string) => incomeTypes.find(t => t.value === v)?.label ?? v}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {incomeTypes.map((t) => (
+                    <SelectItem key={t.value} value={t.value} label={t.label}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {incomeType === 'w2' && (
+                <p className="text-xs text-muted-foreground">
+                  W2 income uses bi-monthly pay — first mark-paid records half, second completes it.
+                </p>
+              )}
+            </div>
+          )}
 
           <DialogFooter>
             <Button

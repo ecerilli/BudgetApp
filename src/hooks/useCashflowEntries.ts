@@ -163,6 +163,34 @@ export function useCreateAdHocEntry() {
   })
 }
 
+export function useCreateCashflowEntry() {
+  const queryClient = useQueryClient()
+  const { householdId } = useAuth()
+
+  return useMutation({
+    mutationFn: async (input: {
+      year: number
+      month: number
+      projected_amount: number
+      budget_item_id?: string | null
+      name?: string
+      category?: ItemCategory
+    }) => {
+      const { data, error } = await supabase
+        .from('cashflow_entries')
+        .insert({ ...input, household_id: householdId! })
+        .select()
+        .single()
+
+      if (error) throw error
+      return data as CashflowEntry
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cashflow_entries', householdId] })
+    },
+  })
+}
+
 export function useDeleteCashflowEntry() {
   const queryClient = useQueryClient()
   const { householdId } = useAuth()

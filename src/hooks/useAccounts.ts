@@ -38,16 +38,28 @@ export function useAccountsByType() {
   const totals = {
     cash: sumByType(query.data, 'cash'),
     credit: sumByType(query.data, 'credit'),
+    creditStatement: sumStatementByType(query.data, 'credit'),
     retirement:
       sumByType(query.data, 'retirement') +
       sumByType(query.data, 'investment') +
       sumByType(query.data, '529'),
   }
 
+  // Per-card CC payment: sum each card's selected amount based on its pay_mode
+  const ccPayTotal = (grouped.credit ?? []).reduce((sum, a) => {
+    const amount = a.pay_mode === 'statement'
+      ? Number(a.statement_balance ?? 0)
+      : Number(a.balance)
+    return sum + amount
+  }, 0)
+
+  // Deferred balance: full balance minus what's being paid this month
+  const ccRollover = totals.credit - ccPayTotal
+
   const netCash = totals.cash - totals.credit
   const netWorth = netCash + totals.retirement
 
-  return { ...query, grouped, totals, netCash, netWorth }
+  return { ...query, grouped, totals, ccPayTotal, ccRollover, netCash, netWorth }
 }
 
 function sumByType(accounts: Account[] | undefined, type: AccountType): number {
@@ -55,6 +67,13 @@ function sumByType(accounts: Account[] | undefined, type: AccountType): number {
   return accounts
     .filter((a) => a.type === type)
     .reduce((sum, a) => sum + Number(a.balance), 0)
+}
+
+function sumStatementByType(accounts: Account[] | undefined, type: AccountType): number {
+  if (!accounts) return 0
+  return accounts
+    .filter((a) => a.type === type)
+    .reduce((sum, a) => sum + Number(a.statement_balance ?? 0), 0)
 }
 
 export function useCreateAccount() {
@@ -86,7 +105,7 @@ export function useUpdateAccount() {
     mutationFn: async ({
       id,
       ...updates
-    }: { id: string } & Partial<Pick<Account, 'name' | 'type' | 'balance' | 'notes' | 'sort_order'>>) => {
+    }: { id: string } & Partial<Pick<Account, 'name' | 'type' | 'balance' | 'statement_balance' | 'pay_mode' | 'notes' | 'sort_order'>>) => {
       const { data, error } = await supabase
         .from('accounts')
         .update({ ...updates, updated_at: new Date().toISOString() })

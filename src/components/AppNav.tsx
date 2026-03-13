@@ -2,7 +2,7 @@ import { NavLink } from 'react-router'
 import { useAuth } from '@/features/auth/AuthProvider'
 
 const navItems = [
-  { to: '/', label: 'Dashboard' },
+  { to: '/', label: 'Accounts' },
   { to: '/cashflow', label: 'Cash Flow' },
   { to: '/budget', label: 'Budget' },
 ]

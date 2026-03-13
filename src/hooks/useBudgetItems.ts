@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/features/auth/AuthProvider'
-import type { BudgetItem, ItemCategory, ItemFrequency } from '@/types/database'
+import type { BudgetItem, ItemCategory, ItemFrequency, IncomeType } from '@/types/database'
 
 export function useBudgetItems() {
   const { householdId } = useAuth()
@@ -58,6 +58,7 @@ export function useCreateBudgetItem() {
       months_active?: number[]
       is_income?: boolean
       cc_paid?: boolean
+      income_type?: IncomeType | null
     }) => {
       const { data, error } = await supabase
         .from('budget_items')
@@ -85,7 +86,7 @@ export function useUpdateBudgetItem() {
     }: { id: string } & Partial<
       Pick<
         BudgetItem,
-        'name' | 'category' | 'monthly_amount' | 'frequency' | 'months_active' | 'is_income' | 'cc_paid' | 'active' | 'sort_order'
+        'name' | 'category' | 'monthly_amount' | 'frequency' | 'months_active' | 'is_income' | 'cc_paid' | 'is_variable' | 'income_type' | 'active' | 'sort_order'
       >
     >) => {
       const { data, error } = await supabase

@@ -61,6 +61,8 @@ export type Database = {
           name: string
           type: AccountType
           balance: number
+          statement_balance: number
+          pay_mode: 'full' | 'statement'
           updated_at: string
           notes: string | null
           sort_order: number
@@ -71,6 +73,8 @@ export type Database = {
           name: string
           type: AccountType
           balance?: number
+          statement_balance?: number
+          pay_mode?: 'full' | 'statement'
           updated_at?: string
           notes?: string | null
           sort_order?: number
@@ -81,6 +85,8 @@ export type Database = {
           name?: string
           type?: AccountType
           balance?: number
+          statement_balance?: number
+          pay_mode?: 'full' | 'statement'
           updated_at?: string
           notes?: string | null
           sort_order?: number
@@ -98,6 +104,8 @@ export type Database = {
           months_active: number[]
           is_income: boolean
           cc_paid: boolean
+          is_variable: boolean
+          income_type: IncomeType | null
           active: boolean
           sort_order: number
         }
@@ -111,6 +119,8 @@ export type Database = {
           months_active?: number[]
           is_income?: boolean
           cc_paid?: boolean
+          is_variable?: boolean
+          income_type?: IncomeType | null
           active?: boolean
           sort_order?: number
         }
@@ -124,6 +134,8 @@ export type Database = {
           months_active?: number[]
           is_income?: boolean
           cc_paid?: boolean
+          is_variable?: boolean
+          income_type?: IncomeType | null
           active?: boolean
           sort_order?: number
         }
@@ -297,7 +309,7 @@ export type Database = {
 export type AccountType = 'cash' | 'credit' | 'retirement' | 'investment' | '529' | 'other'
 export type ItemFrequency = 'monthly' | 'quarterly' | 'yearly' | 'one_time'
 export type ItemCategory = 'housing' | 'utilities' | 'car' | 'food' | 'subscriptions' | 'misc' | 'business' | 'taxes' | 'savings' | 'income'
-export type IncomeType = 'w2' | '1099' | 'untaxed'
+export type IncomeType = 'w2' | '1099' | 'untaxed' | 'gift' | 'reimbursement' | 'refund'
 
 // Convenience row types
 export type Household = Database['public']['Tables']['households']['Row']

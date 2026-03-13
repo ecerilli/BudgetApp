@@ -372,11 +372,11 @@ function AdHocEntryDialog({
               <Label>Category</Label>
               <Select value={category} onValueChange={(v) => setCategory(v as ItemCategory)}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>{(v: string) => adHocCategories.find(c => c.value === v)?.label ?? v}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {adHocCategories.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
+                    <SelectItem key={c.value} value={c.value} label={c.label}>
                       {c.label}
                     </SelectItem>
                   ))}
